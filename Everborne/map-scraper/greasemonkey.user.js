@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      1.3.0
+// @version      1.3.1
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -377,37 +377,48 @@
         throw new Error('Open the Gather or Wild Beasts modal first.');
       }
 
+      const uniqueBeasts = [];
+      const beastIndexByName = new Map();
+      for (const beast of beasts) {
+        const key = String(beast.name || '').trim().toLowerCase();
+        if (!key) continue;
+
+        if (!beastIndexByName.has(key)) {
+          beastIndexByName.set(key, uniqueBeasts.length);
+          uniqueBeasts.push({
+            ...beast,
+            count: 1,
+            ages: beast.age ? [beast.age] : [],
+          });
+          continue;
+        }
+
+        const idx = beastIndexByName.get(key);
+        const target = uniqueBeasts[idx];
+        target.count += 1;
+        if (beast.age && !target.ages.includes(beast.age)) target.ages.push(beast.age);
+      }
+
       const featureRows = [
         ...loc.features,
         ...resources.map((r) => ({
           name: `Resource: ${r.name}${r.biome ? ` (${r.biome})` : ''}`,
           description: [
             r.quality_label ? `Quality: ${r.quality_label}` : null,
-            r.quantity != null ? `Quantity: ${r.quantity}` : null,
-            r.rate ? `Rate: ${r.rate}` : null,
-            r.tool ? `Tool: ${r.tool}` : null,
-            r.requirement ? `Requirement: ${r.requirement}` : null,
             r.availability ? `Availability: ${r.availability}` : null,
-            r.action ? `Action: ${r.action}` : null,
           ].filter(Boolean).join(' | '),
         })),
-        ...beasts.map((b, idx) => ({
-          name: `Wild Beast ${idx + 1}: ${b.name}`,
+        ...uniqueBeasts.map((b) => ({
+          name: `Wild Beast: ${b.name}`,
           description: [
-            b.age ? `Age: ${b.age}` : null,
-            b.status ? `Status: ${b.status}` : null,
-            b.leaves ? `Leaves: ${b.leaves}` : null,
             b.diet ? `Diet: ${b.diet}` : null,
-            b.health ? `Health: ${b.health}` : null,
-            b.behavior ? `Behavior: ${b.behavior}` : null,
-            b.requirement ? `Requirement: ${b.requirement}` : null,
           ].filter(Boolean).join(' | '),
         })),
       ];
 
       const resourceTags = [
         ...resources.flatMap((r) => [r.name, r.biome]),
-        ...beasts.map((b) => b.name),
+        ...uniqueBeasts.map((b) => b.name),
       ]
         .map(normalizeTag)
         .filter(Boolean);
