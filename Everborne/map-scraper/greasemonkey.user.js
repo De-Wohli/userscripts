@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      1.2.0
+// @version      1.3.0
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -61,7 +61,21 @@
     .em-btn--map  { background: #1e2535; color: #e8dcc8; border: 1px solid rgba(255,255,255,0.15); }
     .em-btn--cfg  { background: #1e2535; color: #8a9ab8; border: 1px solid rgba(255,255,255,0.10); font-size: 12px; padding: 4px 10px; }
     .em-btn--chars { background: #1e2535; color: #e8dcc8; border: 1px solid rgba(255,255,255,0.15); }
+    .em-btn--gather { background: #1e2535; color: #b2d5a7; border: 1px solid rgba(178,213,167,0.35); }
+    .em-btn--toolbox { background: #2a3448; color: #f0dfbf; border: 1px solid rgba(240,223,191,0.28); }
     .em-btn--chars.has-skills { background: #1a2e1a; color: #7ec87e; border: 1px solid rgba(80,200,80,0.30); }
+    #em-toolbox-panel {
+      margin-top: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px;
+      background: rgba(20,26,38,0.92);
+      border: 1px solid rgba(255,255,255,0.13);
+      border-radius: 8px;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.38);
+    }
+    #em-toolbox-panel[hidden] { display: none; }
 
     #em-overlay {
       position: fixed;
@@ -244,12 +258,35 @@
   const bar = document.createElement('div');
   bar.id = 'em-bar';
   bar.innerHTML = `
-    <button class="em-btn em-btn--save"  id="em-save-btn">📍 Save Tile</button>
-    <button class="em-btn em-btn--chars" id="em-chars-btn">👤 Characters</button>
-    <button class="em-btn em-btn--map"   id="em-map-btn">🗺 Open Map</button>
-    <button class="em-btn em-btn--cfg"   id="em-cfg-btn">⚙ Settings</button>
+    <button class="em-btn em-btn--toolbox" id="em-toolbox-btn" aria-expanded="false">🧰 Toolbox ▼</button>
+    <div id="em-toolbox-panel" hidden>
+      <button class="em-btn em-btn--save"  id="em-save-btn">📍 Save Tile</button>
+      <button class="em-btn em-btn--gather" id="em-save-res-btn">🌿 Save Gather</button>
+      <button class="em-btn em-btn--chars" id="em-chars-btn">👤 Characters</button>
+      <button class="em-btn em-btn--map"   id="em-map-btn">🗺 Open Map</button>
+      <button class="em-btn em-btn--cfg"   id="em-cfg-btn">⚙ Settings</button>
+    </div>
   `;
   document.body.appendChild(bar);
+
+  const toolboxBtn = document.getElementById('em-toolbox-btn');
+  const toolboxPanel = document.getElementById('em-toolbox-panel');
+  function setToolboxOpen(isOpen) {
+    toolboxPanel.hidden = !isOpen;
+    toolboxBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    toolboxBtn.textContent = isOpen ? '🧰 Toolbox ▲' : '🧰 Toolbox ▼';
+  }
+  setToolboxOpen(false);
+  toolboxBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setToolboxOpen(toolboxPanel.hidden);
+  });
+  document.addEventListener('click', (e) => {
+    if (!bar.contains(e.target)) setToolboxOpen(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setToolboxOpen(false);
+  });
 
   // ── Preview/confirm overlay ────────────────────────────────────────
   const overlay = document.createElement('div');
@@ -325,6 +362,81 @@
     }
   });
 
+  document.getElementById('em-save-res-btn').addEventListener('click', async () => {
+    const saveBtn = document.getElementById('em-save-res-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ Saving…';
+
+    try {
+      const { cx, cy } = getMapGridContext();
+      const loc = extractLocDescData();
+      const resources = extractResourceSnapshotFromGatherModal();
+      const beasts = extractWildBeastsFromModal();
+
+      if (!resources.length && !beasts.length) {
+        throw new Error('Open the Gather or Wild Beasts modal first.');
+      }
+
+      const featureRows = [
+        ...loc.features,
+        ...resources.map((r) => ({
+          name: `Resource: ${r.name}${r.biome ? ` (${r.biome})` : ''}`,
+          description: [
+            r.quality_label ? `Quality: ${r.quality_label}` : null,
+            r.quantity != null ? `Quantity: ${r.quantity}` : null,
+            r.rate ? `Rate: ${r.rate}` : null,
+            r.tool ? `Tool: ${r.tool}` : null,
+            r.requirement ? `Requirement: ${r.requirement}` : null,
+            r.availability ? `Availability: ${r.availability}` : null,
+            r.action ? `Action: ${r.action}` : null,
+          ].filter(Boolean).join(' | '),
+        })),
+        ...beasts.map((b, idx) => ({
+          name: `Wild Beast ${idx + 1}: ${b.name}`,
+          description: [
+            b.age ? `Age: ${b.age}` : null,
+            b.status ? `Status: ${b.status}` : null,
+            b.leaves ? `Leaves: ${b.leaves}` : null,
+            b.diet ? `Diet: ${b.diet}` : null,
+            b.health ? `Health: ${b.health}` : null,
+            b.behavior ? `Behavior: ${b.behavior}` : null,
+            b.requirement ? `Requirement: ${b.requirement}` : null,
+          ].filter(Boolean).join(' | '),
+        })),
+      ];
+
+      const resourceTags = [
+        ...resources.flatMap((r) => [r.name, r.biome]),
+        ...beasts.map((b) => b.name),
+      ]
+        .map(normalizeTag)
+        .filter(Boolean);
+
+      const payload = {
+        x: cx,
+        y: cy,
+        city_name: loc.city_name,
+        city_race: null,
+        terrain_name: loc.terrain_name,
+        terrain_description: loc.terrain_description,
+        features: featureRows,
+        resource_tags: [...new Set(resourceTags)],
+        notes: '',
+        image_base64: null,
+        merge: true,
+      };
+
+      await postTile(payload);
+      showToast(`Gather data saved for (${cx}, ${cy}).`, 'ok');
+    } catch (err) {
+      showToast('Gather save failed: ' + err.message, 'err');
+      console.error('[EverborneMap]', err);
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = '🌿 Save Gather';
+    }
+  });
+
   // Decode the numeric tile ID from a tile image src.
   // The src is /tile.php?id=<base64> where base64 decodes to "<numericId>|<hash>".
   // e.g. "MjI0NXw..." → "2245|60ec..." → 2245
@@ -338,6 +450,181 @@
     } catch (e) {
       return null;
     }
+  }
+
+  function normalizeTag(str) {
+    return String(str || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  function getMapGridContext() {
+    const GRID_COLS = 3;
+    const CENTER_IDX = 4;
+
+    const mapGrid = document.querySelector('.map-grid');
+    if (!mapGrid) throw new Error('No map grid found on this page.');
+
+    const tileWraps = Array.from(mapGrid.querySelectorAll('.tile-wrap'));
+    if (tileWraps.length < 9) throw new Error(`Expected 9 tiles in the grid, found ${tileWraps.length}.`);
+
+    const centerImg = tileWraps[CENTER_IDX].querySelector('.tile-img');
+    if (!centerImg || !centerImg.src) throw new Error('Center tile has no image — cannot determine world position.');
+    const centerId = decodeTileIdFromSrc(centerImg.src);
+    if (!centerId) throw new Error('Could not decode world position from center tile image URL.');
+
+    const bottomCenterImg = tileWraps[CENTER_IDX + GRID_COLS].querySelector('.tile-img');
+    if (!bottomCenterImg || !bottomCenterImg.src) throw new Error('Bottom-center tile has no image — cannot determine world width.');
+    const bottomCenterId = decodeTileIdFromSrc(bottomCenterImg.src);
+    if (!bottomCenterId || bottomCenterId <= centerId) throw new Error('Could not determine world width from tile images.');
+
+    const worldWidth = bottomCenterId - centerId;
+    const cx = centerId % worldWidth;
+    const cy = Math.floor(centerId / worldWidth);
+
+    return { mapGrid, tileWraps, worldWidth, cx, cy };
+  }
+
+  function extractLocDescData() {
+    const cityEl = document.querySelector('#locDesc h4');
+    const city_name = cityEl ? cityEl.textContent.trim() : null;
+
+    const terrainEl = document.querySelector('#locDesc h5');
+    const terrain_name = terrainEl ? terrainEl.textContent.trim() : null;
+
+    let terrain_description = null;
+    const locDesc = document.getElementById('locDesc');
+    if (locDesc) {
+      const firstWell = locDesc.querySelector('.collapse .well.well-sm');
+      if (firstWell) terrain_description = firstWell.textContent.trim();
+    }
+
+    const features = [];
+    if (locDesc) {
+      locDesc.querySelectorAll('ul > li').forEach(li => {
+        const nameAnchor = li.querySelector('a');
+        if (!nameAnchor) return;
+        const name = nameAnchor.textContent.trim();
+        let sibling = li.nextElementSibling;
+        let description = '';
+        while (sibling && !sibling.matches('li')) {
+          const well = sibling.querySelector('.well.well-sm');
+          if (well) { description = well.textContent.trim(); break; }
+          sibling = sibling.nextElementSibling;
+        }
+        if (name) features.push({ name, description });
+      });
+    }
+
+    return { city_name, terrain_name, terrain_description, features };
+  }
+
+  function findVisibleModalContent(selector) {
+    const nodes = Array.from(document.querySelectorAll(selector));
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const el = nodes[i];
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') continue;
+      if (el.closest('.modal') && !el.closest('.modal').classList.contains('show')) continue;
+      return el;
+    }
+    return null;
+  }
+
+  function nearestGatherBiome(row) {
+    let node = row.previousElementSibling;
+    while (node) {
+      if (node.classList && node.classList.contains('gather-biome-heading')) {
+        const txt = node.textContent.trim();
+        if (txt) return txt;
+      }
+      node = node.previousElementSibling;
+    }
+    return null;
+  }
+
+  function extractResourceSnapshotFromGatherModal() {
+    const modal = findVisibleModalContent('.gather-modal, .modal-content.gather-modal');
+    if (!modal) return [];
+
+    const rows = Array.from(modal.querySelectorAll('.modal-body .row'));
+    const out = [];
+
+    for (const row of rows) {
+      const name = row.querySelector('.col-6 b')?.textContent.trim();
+      const qtyInput = row.querySelector('.col-3 input[type="number"]');
+      if (!name || !qtyInput) continue;
+
+      const infoSmall = row.querySelector('.col-6 small');
+      const infoLines = infoSmall
+        ? infoSmall.innerHTML
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<[^>]*>/g, '')
+            .split('\n')
+            .map(s => s.trim())
+            .filter(Boolean)
+        : [];
+
+      const qualityLine = infoLines.find(l => /quality/i.test(l)) || null;
+      const toolLine = infoLines.find(l => /tool required|no tool required/i.test(l)) || null;
+      const availability = infoLines.find(l => /(abundant|common|uncommon|rare|scarce|depleted)/i.test(l)) || null;
+      const requirement = infoLines.find(l => /:/i.test(l) && !/quality|tool required|no tool required|abundant|common|uncommon|rare|scarce|depleted/i.test(l)) || null;
+
+      const rate = Array.from(row.querySelectorAll('.col-3 .text-muted'))
+        .map(el => el.textContent.trim())
+        .find(t => /^Rate:/i.test(t)) || null;
+
+      const action = row.querySelector('.col-3 button')?.textContent.trim() || null;
+
+      out.push({
+        name,
+        biome: nearestGatherBiome(row),
+        quantity: Number(qtyInput.value) || 1,
+        quality_label: qualityLine,
+        tool: toolLine,
+        availability,
+        requirement,
+        rate,
+        action,
+      });
+    }
+
+    return out;
+  }
+
+  function extractWildBeastsFromModal() {
+    const modal = findVisibleModalContent('#wildAnimalModalRoot .modal-content, .modal-content[data-help="modal.animalUpdate.content"]');
+    if (!modal) return [];
+
+    const rows = Array.from(modal.querySelectorAll('.wild-animal-row'));
+    const out = [];
+
+    for (const row of rows) {
+      const titleRaw = row.querySelector('.wild-animal-title')?.textContent || '';
+      const name = titleRaw.replace(/^[^A-Za-z0-9]+/, '').trim();
+      if (!name) continue;
+
+      const notes = Array.from(row.querySelectorAll('.row-note')).map(n => n.textContent.trim()).filter(Boolean);
+      const badges = Array.from(row.querySelectorAll('.wild-animal-top-meta .badge')).map(b => b.textContent.trim()).filter(Boolean);
+      const diet = row.querySelector('.wild-animal-diet-copy')?.textContent.trim() || null;
+      const health = row.querySelector('.progress-bar')?.textContent.trim() || null;
+      const behavior = row.querySelector('.wild-animal-behavior-text')?.textContent.trim() || null;
+
+      out.push({
+        name,
+        age: notes[0] || null,
+        requirement: notes[1] || null,
+        status: badges[0] || null,
+        leaves: badges[1] || null,
+        diet,
+        health,
+        behavior,
+      });
+    }
+
+    return out;
   }
 
   async function extractCurrentTile() {
@@ -358,14 +645,7 @@
     //      dx = (selectedIdx % 3) − 1,  dy = floor(selectedIdx / 3) − 1.
 
     const GRID_COLS = 3;
-    const CENTER_IDX = 4; // slot 5, always the character's current tile
-
-    // 1. Find the map grid
-    const mapGrid = document.querySelector('.map-grid');
-    if (!mapGrid) throw new Error('No map grid found on this page.');
-
-    const tileWraps = Array.from(mapGrid.querySelectorAll('.tile-wrap'));
-    if (tileWraps.length < 9) throw new Error(`Expected 9 tiles in the grid, found ${tileWraps.length}.`);
+    const { tileWraps, cx, cy } = getMapGridContext();
 
     // 2. Identify the selected (destination/highlighted) tile
     const selectedIdx = tileWraps.findIndex(w => w.classList.contains('is-selected'));
@@ -373,25 +653,7 @@
 
     const selected = tileWraps[selectedIdx];
 
-    // 3. Decode center tile ID (character's current position)
-    const centerImg = tileWraps[CENTER_IDX].querySelector('.tile-img');
-    if (!centerImg || !centerImg.src) throw new Error('Center tile has no image — cannot determine world position.');
-    const centerId = decodeTileIdFromSrc(centerImg.src);
-    if (!centerId) throw new Error('Could not decode world position from center tile image URL.');
-
-    // 4. Derive world width using bottom-center tile (same column, one row below center)
-    const bottomCenterImg = tileWraps[CENTER_IDX + GRID_COLS].querySelector('.tile-img');
-    if (!bottomCenterImg || !bottomCenterImg.src) throw new Error('Bottom-center tile has no image — cannot determine world width.');
-    const bottomCenterId = decodeTileIdFromSrc(bottomCenterImg.src);
-    if (!bottomCenterId || bottomCenterId <= centerId) throw new Error('Could not determine world width from tile images.');
-
-    const worldWidth = bottomCenterId - centerId;
-
-    // 5. Center tile's world coordinates
-    const cx = centerId % worldWidth;
-    const cy = Math.floor(centerId / worldWidth);
-
-    // 6. Selected tile's offset from center in the 3×3 grid
+    // 3. Selected tile's offset from center in the 3×3 grid
     const dx = (selectedIdx % GRID_COLS) - 1;  // −1 = left, 0 = center, +1 = right
     const dy = Math.floor(selectedIdx / GRID_COLS) - 1; // −1 = above, 0 = same row, +1 = below
 
@@ -409,37 +671,8 @@
       }
     }
 
-    // 8. Text fields from #locDesc (only populated for the character's current tile)
-    const cityEl = document.querySelector('#locDesc h4');
-    const city_name = cityEl ? cityEl.textContent.trim() : null;
-
-    const terrainEl = document.querySelector('#locDesc h5');
-    const terrain_name = terrainEl ? terrainEl.textContent.trim() : null;
-
-    let terrain_description = null;
-    const locDesc = document.getElementById('locDesc');
-    if (locDesc) {
-      const firstWell = locDesc.querySelector('.collapse .well.well-sm');
-      if (firstWell) terrain_description = firstWell.textContent.trim();
-    }
-
-    // 9. Features — from the <ul> in #locDesc
-    const features = [];
-    if (locDesc) {
-      locDesc.querySelectorAll('ul > li').forEach(li => {
-        const nameAnchor = li.querySelector('a');
-        if (!nameAnchor) return;
-        const name = nameAnchor.textContent.trim();
-        let sibling = li.nextElementSibling;
-        let description = '';
-        while (sibling && !sibling.matches('li')) {
-          const well = sibling.querySelector('.well.well-sm');
-          if (well) { description = well.textContent.trim(); break; }
-          sibling = sibling.nextElementSibling;
-        }
-        if (name) features.push({ name, description });
-      });
-    }
+    // 4. Text fields from #locDesc (character's current tile)
+    const { city_name, terrain_name, terrain_description, features } = extractLocDescData();
 
     // Note: #locDesc reflects the character's current tile (center, index 4).
     // For neighbouring tiles we still pre-fill with whatever is available so
