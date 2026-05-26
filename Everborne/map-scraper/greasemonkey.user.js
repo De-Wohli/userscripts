@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      1.3.1
+// @version      1.3.2
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -189,6 +189,28 @@
     #em-cfg-modal h2 { font-size: 15px; margin-bottom: 14px; color: #8a9ab8; cursor: grab; user-select: none; }
     #em-cfg-modal h2:active { cursor: grabbing; }
 
+    #em-coord-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.72);
+      z-index: 9999999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #em-coord-overlay[hidden] { display: none; }
+    #em-coord-modal {
+      background: #171c27;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 8px;
+      width: min(360px, 96vw);
+      color: #e8dcc8;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      padding: 20px;
+    }
+    #em-coord-modal h2 { font-size: 15px; margin-bottom: 14px; color: #b2d5a7; cursor: grab; user-select: none; }
+    #em-coord-modal h2:active { cursor: grabbing; }
+
     #em-chars-overlay {
       position: fixed;
       inset: 0;
@@ -318,6 +340,31 @@
   `;
   document.body.appendChild(cfgOverlay);
 
+  const coordOverlay = document.createElement('div');
+  coordOverlay.id = 'em-coord-overlay';
+  coordOverlay.hidden = true;
+  coordOverlay.innerHTML = `
+    <div id="em-coord-modal">
+      <h2>Set Tile Coordinates</h2>
+      <div style="font-size:12px;color:#8a9ab8;margin-bottom:10px;">
+        The world tile could not be determined automatically. Enter the coordinates for the tile to update.
+      </div>
+      <div class="em-field">
+        <label>X Coordinate</label>
+        <input id="em-coord-x" type="number" step="1" placeholder="e.g. 123">
+      </div>
+      <div class="em-field">
+        <label>Y Coordinate</label>
+        <input id="em-coord-y" type="number" step="1" placeholder="e.g. 456">
+      </div>
+      <div class="em-row">
+        <button class="em-submit" id="em-coord-save">Use Coordinates</button>
+        <button class="em-cancel" id="em-coord-cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(coordOverlay);
+
   // ── Button handlers ────────────────────────────────────────────────
   document.getElementById('em-map-btn').addEventListener('click', () => {
     window.open(getServer(), '_blank');
@@ -368,13 +415,33 @@
     saveBtn.textContent = '⏳ Saving…';
 
     try {
-      const { cx, cy } = getMapGridContext();
+      let tileCoords = null;
+      try {
+        const { cx, cy } = getMapGridContext();
+        tileCoords = { x: cx, y: cy };
+      } catch (err) {
+        tileCoords = await promptForTileCoordinates();
+        if (!tileCoords) throw new Error('Coordinate entry cancelled.');
+      }
+
       const loc = extractLocDescData();
       const resources = extractResourceSnapshotFromGatherModal();
       const beasts = extractWildBeastsFromModal();
 
       if (!resources.length && !beasts.length) {
         throw new Error('Open the Gather or Wild Beasts modal first.');
+      }
+
+      const uniqueResources = [];
+      const resourceIndexByName = new Map();
+      for (const resource of resources) {
+        const key = String(resource.name || '').trim().toLowerCase();
+        if (!key) continue;
+
+        if (!resourceIndexByName.has(key)) {
+          resourceIndexByName.set(key, uniqueResources.length);
+          uniqueResources.push(resource);
+        }
       }
 
       const uniqueBeasts = [];
@@ -401,7 +468,7 @@
 
       const featureRows = [
         ...loc.features,
-        ...resources.map((r) => ({
+        ...uniqueResources.map((r) => ({
           name: `Resource: ${r.name}${r.biome ? ` (${r.biome})` : ''}`,
           description: [
             r.quality_label ? `Quality: ${r.quality_label}` : null,
@@ -417,15 +484,15 @@
       ];
 
       const resourceTags = [
-        ...resources.flatMap((r) => [r.name, r.biome]),
+        ...uniqueResources.flatMap((r) => [r.name, r.biome]),
         ...uniqueBeasts.map((b) => b.name),
       ]
         .map(normalizeTag)
         .filter(Boolean);
 
       const payload = {
-        x: cx,
-        y: cy,
+        x: tileCoords.x,
+        y: tileCoords.y,
         city_name: loc.city_name,
         city_race: null,
         terrain_name: loc.terrain_name,
@@ -438,7 +505,7 @@
       };
 
       await postTile(payload);
-      showToast(`Gather data saved for (${cx}, ${cy}).`, 'ok');
+      showToast(`Gather data saved for (${tileCoords.x}, ${tileCoords.y}).`, 'ok');
     } catch (err) {
       showToast('Gather save failed: ' + err.message, 'err');
       console.error('[EverborneMap]', err);
@@ -469,6 +536,55 @@
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
+  }
+
+  function promptForTileCoordinates() {
+    return new Promise((resolve) => {
+      const xInput = document.getElementById('em-coord-x');
+      const yInput = document.getElementById('em-coord-y');
+      const saveBtn = document.getElementById('em-coord-save');
+      const cancelBtn = document.getElementById('em-coord-cancel');
+      const modal = document.getElementById('em-coord-modal');
+
+      if (!xInput || !yInput || !saveBtn || !cancelBtn || !modal) {
+        resolve(null);
+        return;
+      }
+
+      coordOverlay.hidden = false;
+      xInput.value = '';
+      yInput.value = '';
+      makeDraggable(modal, modal.querySelector('h2'));
+      xInput.focus();
+
+      const close = (result) => {
+        coordOverlay.hidden = true;
+        saveBtn.removeEventListener('click', onSave);
+        cancelBtn.removeEventListener('click', onCancel);
+        coordOverlay.removeEventListener('click', onBackdropClick);
+        document.removeEventListener('keydown', onEscape);
+        resolve(result);
+      };
+
+      const onSave = () => {
+        const x = Number.parseInt(xInput.value, 10);
+        const y = Number.parseInt(yInput.value, 10);
+        if (!Number.isInteger(x) || !Number.isInteger(y)) {
+          showToast('Enter valid integer coordinates.', 'err');
+          return;
+        }
+        close({ x, y });
+      };
+
+      const onCancel = () => close(null);
+      const onBackdropClick = (e) => { if (e.target === coordOverlay) close(null); };
+      const onEscape = (e) => { if (e.key === 'Escape') close(null); };
+
+      saveBtn.addEventListener('click', onSave);
+      cancelBtn.addEventListener('click', onCancel);
+      coordOverlay.addEventListener('click', onBackdropClick);
+      document.addEventListener('keydown', onEscape);
+    });
   }
 
   function getMapGridContext() {
