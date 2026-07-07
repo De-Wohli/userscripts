@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      1.3.2
+// @version      1.3.3
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -326,11 +326,11 @@
       <h2>⚙ Everborne Map Settings</h2>
       <div class="em-field">
         <label>Map server URL</label>
-        <input id="em-cfg-server" type="text" placeholder="http://localhost:3000">
+        <input id="em-cfg-server" type="text" placeholder="http://localhost:3000" autocomplete="off">
       </div>
       <div class="em-field">
         <label>API Key</label>
-        <input id="em-cfg-key" type="password" placeholder="Paste your API key">
+        <input id="em-cfg-key" type="password" placeholder="Paste your API key" autocomplete="new-password">
       </div>
       <div class="em-row">
         <button class="em-submit" id="em-cfg-save">Save</button>
@@ -351,11 +351,11 @@
       </div>
       <div class="em-field">
         <label>X Coordinate</label>
-        <input id="em-coord-x" type="number" step="1" placeholder="e.g. 123">
+        <input id="em-coord-x" type="number" step="1" placeholder="e.g. 123" autocomplete="off">
       </div>
       <div class="em-field">
         <label>Y Coordinate</label>
-        <input id="em-coord-y" type="number" step="1" placeholder="e.g. 456">
+        <input id="em-coord-y" type="number" step="1" placeholder="e.g. 456" autocomplete="off">
       </div>
       <div class="em-row">
         <button class="em-submit" id="em-coord-save">Use Coordinates</button>
@@ -854,19 +854,19 @@
 
       <div class="em-field">
         <label>City Name</label>
-        <input id="em-p-city" type="text" value="${sanitizeAttr(data.city_name || '')}">
+        <input id="em-p-city" type="text" value="${sanitizeAttr(data.city_name || '')}" autocomplete="off">
       </div>
       <div class="em-field">
         <label>City Race / Faction</label>
-        <input id="em-p-race" type="text" value="">
+        <input id="em-p-race" type="text" value="" autocomplete="off">
       </div>
       <div class="em-field">
         <label>Terrain</label>
-        <input id="em-p-terrain" type="text" value="${sanitizeAttr(data.terrain_name || '')}">
+        <input id="em-p-terrain" type="text" value="${sanitizeAttr(data.terrain_name || '')}" autocomplete="off">
       </div>
       <div class="em-field">
         <label>Terrain Description</label>
-        <textarea id="em-p-terrain-desc" rows="2">${sanitizeText(data.terrain_description || '')}</textarea>
+        <textarea id="em-p-terrain-desc" rows="2" autocomplete="off">${sanitizeText(data.terrain_description || '')}</textarea>
       </div>
 
       <h3>Features (${data.features.length})</h3>
@@ -876,11 +876,11 @@
 
       <div class="em-field">
         <label>Resource Tags <span style="font-weight:400;color:#5a6880;">(comma-separated)</span></label>
-        <input id="em-p-tags" type="text" placeholder="e.g. wood, fish, stone">
+        <input id="em-p-tags" type="text" placeholder="e.g. wood, fish, stone" autocomplete="off">
       </div>
       <div class="em-field">
         <label>Notes</label>
-        <textarea id="em-p-notes" rows="2" placeholder="Your personal notes…"></textarea>
+        <textarea id="em-p-notes" rows="2" placeholder="Your personal notes…" autocomplete="off"></textarea>
       </div>
 
       <div id="em-p-error" style="color:#f08080;font-size:12px;margin-top:6px;display:none;"></div>
@@ -1248,15 +1248,15 @@
     gmSkills = ch ? ch.skills.map(s => ({ ...s })) : [];
 
     inner.innerHTML = `
-      <form id="em-char-form" novalidate>
+      <form id="em-char-form" novalidate autocomplete="off">
         ${scrapeNotice ? `<div style="background:rgba(80,200,80,0.1);border:1px solid rgba(80,200,80,0.3);border-radius:4px;padding:6px 10px;font-size:11px;color:#7ec87e;margin-bottom:10px;">${sanitizeText(scrapeNotice)}</div>` : ''}
         <div class="em-field">
           <label>Character Name</label>
-          <input id="em-char-name" type="text" value="${sanitizeAttr(ch ? ch.name : '')}" placeholder="e.g. Aldric the Bold" required>
+          <input id="em-char-name" type="text" value="${sanitizeAttr(ch ? ch.name : '')}" placeholder="e.g. Aldric the Bold" autocomplete="off" required>
         </div>
         <div class="em-field">
           <label>Player</label>
-          <input id="em-char-player" type="text" value="${sanitizeAttr(ch && ch.player ? ch.player : '')}" placeholder="e.g. Alice">
+          <input id="em-char-player" type="text" value="${sanitizeAttr(ch && ch.player ? ch.player : '')}" placeholder="e.g. Alice" autocomplete="off">
         </div>
         <h3 style="font-size:12px;color:#8a9ab8;margin:10px 0 6px;text-transform:uppercase;letter-spacing:0.06em;">Skills</h3>
         <div id="em-skill-rows" style="margin-bottom:6px;"></div>
@@ -1323,6 +1323,7 @@
       const nameIn = document.createElement('input');
       nameIn.className = 'em-skill-input';
       nameIn.type = 'text';
+      nameIn.autocomplete = 'off';
       nameIn.placeholder = 'Skill name';
       nameIn.value = skill.name || '';
       nameIn.style.flex = '2';
@@ -1331,6 +1332,7 @@
       const levelIn = document.createElement('input');
       levelIn.className = 'em-skill-input';
       levelIn.type = 'number';
+      levelIn.autocomplete = 'off';
       levelIn.placeholder = 'Lv';
       levelIn.min = 1;
       levelIn.value = skill.level != null ? skill.level : '';
@@ -1342,6 +1344,7 @@
       const descIn = document.createElement('input');
       descIn.className = 'em-skill-input';
       descIn.type = 'text';
+      descIn.autocomplete = 'off';
       descIn.placeholder = 'Description';
       descIn.value = skill.description || '';
       descIn.style.flex = '3';
