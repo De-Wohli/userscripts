@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      1.3.3
+// @version      1.4.0
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -62,6 +62,7 @@
     .em-btn--cfg  { background: #1e2535; color: #8a9ab8; border: 1px solid rgba(255,255,255,0.10); font-size: 12px; padding: 4px 10px; }
     .em-btn--chars { background: #1e2535; color: #e8dcc8; border: 1px solid rgba(255,255,255,0.15); }
     .em-btn--gather { background: #1e2535; color: #b2d5a7; border: 1px solid rgba(178,213,167,0.35); }
+    .em-btn--ledger { background: #1e2535; color: #7fb0e0; border: 1px solid rgba(127,176,224,0.35); }
     .em-btn--toolbox { background: #2a3448; color: #f0dfbf; border: 1px solid rgba(240,223,191,0.28); }
     .em-btn--chars.has-skills { background: #1a2e1a; color: #7ec87e; border: 1px solid rgba(80,200,80,0.30); }
     #em-toolbox-panel {
@@ -284,6 +285,7 @@
     <div id="em-toolbox-panel" hidden>
       <button class="em-btn em-btn--save"  id="em-save-btn">📍 Save Tile</button>
       <button class="em-btn em-btn--gather" id="em-save-res-btn">🌿 Save Gather</button>
+      <button class="em-btn em-btn--ledger" id="em-save-ledger-btn">📒 Save Ledger</button>
       <button class="em-btn em-btn--chars" id="em-chars-btn">👤 Characters</button>
       <button class="em-btn em-btn--map"   id="em-map-btn">🗺 Open Map</button>
       <button class="em-btn em-btn--cfg"   id="em-cfg-btn">⚙ Settings</button>
@@ -512,6 +514,42 @@
     } finally {
       saveBtn.disabled = false;
       saveBtn.textContent = '🌿 Save Gather';
+    }
+  });
+
+  document.getElementById('em-save-ledger-btn').addEventListener('click', async () => {
+    const saveBtn = document.getElementById('em-save-ledger-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ Saving…';
+
+    try {
+      const ledger = extractWarehouseLedgerFromModal();
+      if (!ledger) throw new Error('Open the Warehouse Ledger modal first.');
+      if (!ledger.entries.length) throw new Error('No ledger rows found to import.');
+
+      // Best-effort only: a warehouse with a registered city doesn't need
+      // tile coords to be identified, so don't block the save if this fails.
+      let tileCoords = null;
+      try {
+        const { cx, cy } = getMapGridContext();
+        tileCoords = { x: cx, y: cy };
+      } catch (_) { /* no map grid visible right now — that's fine */ }
+
+      const entriesWithLocation = tileCoords
+        ? ledger.entries.map(e => ({ ...e, tile_x: tileCoords.x, tile_y: tileCoords.y }))
+        : ledger.entries;
+
+      const result = await postLedgerImport(entriesWithLocation);
+      const skippedNote = ledger.skippedSelfUnresolved
+        ? `, ${ledger.skippedSelfUnresolved} skipped (couldn't confirm your own name)`
+        : '';
+      showToast(`Ledger saved: ${result.inserted} new, ${result.skipped} already known${skippedNote}.`, 'ok');
+    } catch (err) {
+      showToast('Ledger save failed: ' + err.message, 'err');
+      console.error('[EverborneMap]', err);
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = '📒 Save Ledger';
     }
   });
 
@@ -754,6 +792,80 @@
     return out;
   }
 
+  // ── Warehouse ledger ─────────────────────────────────────────────────
+  // The ledger's "Who" column shows whoever moved a ware under whatever
+  // name the game displays to the CURRENT viewer: a real registered
+  // nickname (data-nickname, e.g. "thud"), a generic physical description
+  // when the viewer doesn't know them yet ("tall adult skorn" — genuinely
+  // anonymous, not just a display quirk), or the literal "you" for the
+  // viewer's own moves. "you" is meaningless once this data leaves the
+  // browser (whose "you"?), so it's resolved to the parser's own character
+  // name — via extractCharacterName() — before anything is sent to the
+  // server. Rows we can't confidently attribute are skipped rather than
+  // guessed at.
+  function extractWarehouseLedgerFromModal() {
+    const modal = findVisibleModalContent('#warehouseLedgerModal');
+    if (!modal) return null;
+
+    const warehouseName = modal.querySelector('.modal-title')?.textContent.trim() || null;
+
+    // Summary block's second line reads either "No city registered" or the city name.
+    const summaryCityEl = modal.querySelector('.warehouse-ledger-summary .text-muted');
+    let cityName = summaryCityEl ? summaryCityEl.textContent.trim() : null;
+    if (cityName && /no city registered/i.test(cityName)) cityName = null;
+
+    const rows = Array.from(modal.querySelectorAll('#warehouse-ledger-body tr[data-created]'));
+    const entries = [];
+    let skippedSelfUnresolved = 0;
+    let selfName = null;
+
+    for (const row of rows) {
+      const cells = row.querySelectorAll('td');
+      if (cells.length < 6) continue;
+
+      const occurredAt = row.getAttribute('data-created');
+      let mover = String(row.getAttribute('data-nickname') || '').trim().toLowerCase();
+      const gameTime = cells[0].textContent.trim();
+      const flow = cells[2].textContent.trim().toLowerCase();
+      const itemCell = cells[3];
+      const quantity = Number(cells[4].textContent.trim());
+      const reason = cells[5].textContent.trim();
+      if (!mover || !occurredAt || !Number.isFinite(quantity)) continue;
+
+      // Item name sits before the trailing "<small><i class="fa-solid fa-gem"></i>N</small>" quality badge.
+      const qualitySmall = itemCell.querySelector('small');
+      let quality = null;
+      let item = itemCell.textContent.trim();
+      if (qualitySmall) {
+        const qn = Number(qualitySmall.textContent.trim());
+        quality = Number.isFinite(qn) ? qn : null;
+        item = itemCell.textContent.replace(qualitySmall.textContent, '').trim();
+      }
+      if (!item) continue;
+
+      if (mover === 'you') {
+        if (selfName === null) selfName = extractCharacterName() || '';
+        if (!selfName) { skippedSelfUnresolved += 1; continue; }
+        mover = selfName.trim().toLowerCase();
+      }
+
+      entries.push({
+        mover,
+        item,
+        quality,
+        quantity,
+        direction: flow === 'in' ? 'in' : 'out',
+        reason,
+        warehouse_name: warehouseName,
+        city_name: cityName,
+        game_time: gameTime,
+        occurred_at: occurredAt,
+      });
+    }
+
+    return { warehouseName, cityName, entries, skippedSelfUnresolved };
+  }
+
   async function extractCurrentTile() {
     // The game renders a 3×3 grid of tiles around the character:
     //
@@ -951,6 +1063,35 @@
           'X-API-Key': key,
         },
         data: JSON.stringify(payload),
+        onload(response) {
+          if (response.status === 401) return reject(new Error('Invalid API key.'));
+          if (response.status < 200 || response.status >= 300) {
+            let msg = `Server error (${response.status})`;
+            try { msg = JSON.parse(response.responseText).error || msg; } catch {}
+            return reject(new Error(msg));
+          }
+          resolve(JSON.parse(response.responseText));
+        },
+        onerror() { reject(new Error('Could not reach map server. Is it running?')); },
+      });
+    });
+  }
+
+  function postLedgerImport(entries) {
+    return new Promise((resolve, reject) => {
+      const key = getApiKey();
+      if (!key) {
+        return reject(new Error('No API key set. Open ⚙ Settings to configure it.'));
+      }
+
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: `${getServer()}/api/ledger/import`,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': key,
+        },
+        data: JSON.stringify({ entries }),
         onload(response) {
           if (response.status === 401) return reject(new Error('Invalid API key.'));
           if (response.status < 200 || response.status >= 300) {
