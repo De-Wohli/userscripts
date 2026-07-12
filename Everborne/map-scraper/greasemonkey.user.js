@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      1.6.0
+// @version      1.7.0
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -63,6 +63,7 @@
     .em-btn--chars { background: #1e2535; color: #e8dcc8; border: 1px solid rgba(255,255,255,0.15); }
     .em-btn--gather { background: #1e2535; color: #b2d5a7; border: 1px solid rgba(178,213,167,0.35); }
     .em-btn--ledger { background: #1e2535; color: #7fb0e0; border: 1px solid rgba(127,176,224,0.35); }
+    .em-btn--memory { background: #1e2535; color: #c99fe0; border: 1px solid rgba(201,159,224,0.35); }
     .em-btn--toolbox { background: #2a3448; color: #f0dfbf; border: 1px solid rgba(240,223,191,0.28); }
     .em-btn--chars.has-skills { background: #1a2e1a; color: #7ec87e; border: 1px solid rgba(80,200,80,0.30); }
     #em-toolbox-panel {
@@ -286,6 +287,7 @@
       <button class="em-btn em-btn--save"  id="em-save-btn">📍 Save Tile</button>
       <button class="em-btn em-btn--gather" id="em-save-res-btn">🌿 Save Gather</button>
       <button class="em-btn em-btn--ledger" id="em-save-ledger-btn">📒 Save Ledger</button>
+      <button class="em-btn em-btn--memory" id="em-save-memory-btn">🧠 Save Memory</button>
       <button class="em-btn em-btn--chars" id="em-chars-btn">👤 Characters</button>
       <button class="em-btn em-btn--map"   id="em-map-btn">🗺 Open Map</button>
       <button class="em-btn em-btn--cfg"   id="em-cfg-btn">⚙ Settings</button>
@@ -550,6 +552,33 @@
     } finally {
       saveBtn.disabled = false;
       saveBtn.textContent = '📒 Save Ledger';
+    }
+  });
+
+  document.getElementById('em-save-memory-btn').addEventListener('click', async () => {
+    const saveBtn = document.getElementById('em-save-memory-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ Saving…';
+
+    try {
+      const entries = extractMemoryFromModal();
+      if (!entries) throw new Error('Open the Memory modal first.');
+      if (!entries.length) throw new Error('No remembered people found to import.');
+
+      const result = await postMemoryImport(entries);
+      const collisionNote = result.collisions.length
+        ? `, ${result.collisions.length} name(s) left for manual merge (shared by more than one person): ${result.collisions.join(', ')}`
+        : '';
+      showToast(
+        `Memory saved: ${result.charactersCreated} new, ${result.charactersUpdated} updated, ${result.aliasesLinked} ledger name(s) auto-linked${collisionNote}.`,
+        'ok'
+      );
+    } catch (err) {
+      showToast('Memory save failed: ' + err.message, 'err');
+      console.error('[EverborneMap]', err);
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = '🧠 Save Memory';
     }
   });
 
@@ -864,6 +893,62 @@
     }
 
     return { warehouseName, cityName, entries, skippedSelfUnresolved };
+  }
+
+  // ── Memory modal ──────────────────────────────────────────────────────
+  // Each remembered person is one .mem-item button carrying the game's own
+  // identity data: data-target-id (a stable id — except for the "self"
+  // entry, where every character's own memory book reuses 0 as a sentinel),
+  // data-origin ("self" vs "nickname"), data-name, and data-subdesc (their
+  // species/type). Only "person" entries are relevant here — "place" memory
+  // entries carry no identity to cross-reference against the ledger.
+  function extractMemoryFromModal() {
+    const modal = findVisibleModalContent('#memoryModalRoot .modal-content, .modal-content[data-help="modal.memory.content"]');
+    if (!modal) return null;
+
+    const items = Array.from(modal.querySelectorAll('.mem-item[data-type="person"]'));
+    const entries = [];
+    for (const item of items) {
+      const name = String(item.dataset.name || '').trim();
+      if (!name) continue;
+      entries.push({
+        name,
+        origin: item.dataset.origin === 'self' ? 'self' : 'nickname',
+        targetId: Number(item.dataset.targetId),
+        subdesc: String(item.dataset.subdesc || '').trim(),
+        type: 'person',
+      });
+    }
+    return entries;
+  }
+
+  function postMemoryImport(entries) {
+    return new Promise((resolve, reject) => {
+      const key = getApiKey();
+      if (!key) {
+        return reject(new Error('No API key set. Open ⚙ Settings to configure it.'));
+      }
+
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: `${getServer()}/api/characters/memory/import`,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': key,
+        },
+        data: JSON.stringify({ entries }),
+        onload(response) {
+          if (response.status === 401) return reject(new Error('Invalid API key.'));
+          if (response.status < 200 || response.status >= 300) {
+            let msg = `Server error (${response.status})`;
+            try { msg = JSON.parse(response.responseText).error || msg; } catch {}
+            return reject(new Error(msg));
+          }
+          resolve(JSON.parse(response.responseText));
+        },
+        onerror() { reject(new Error('Could not reach map server. Is it running?')); },
+      });
+    });
   }
 
   async function extractCurrentTile() {
