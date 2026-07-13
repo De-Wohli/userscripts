@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      1.8.0
+// @version      1.9.0
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -63,6 +63,7 @@
     .em-btn--chars { background: #1e2535; color: #e8dcc8; border: 1px solid rgba(255,255,255,0.15); }
     .em-btn--gather { background: #1e2535; color: #b2d5a7; border: 1px solid rgba(178,213,167,0.35); }
     .em-btn--ledger { background: #1e2535; color: #7fb0e0; border: 1px solid rgba(127,176,224,0.35); }
+    .em-btn--stock { background: #1e2535; color: #a8d08d; border: 1px solid rgba(168,208,141,0.35); }
     .em-btn--memory { background: #1e2535; color: #c99fe0; border: 1px solid rgba(201,159,224,0.35); }
     .em-btn--toolbox { background: #2a3448; color: #f0dfbf; border: 1px solid rgba(240,223,191,0.28); }
     .em-btn--chars.has-skills { background: #1a2e1a; color: #7ec87e; border: 1px solid rgba(80,200,80,0.30); }
@@ -287,6 +288,7 @@
       <button class="em-btn em-btn--save"  id="em-save-btn">📍 Save Tile</button>
       <button class="em-btn em-btn--gather" id="em-save-res-btn">🌿 Save Gather</button>
       <button class="em-btn em-btn--ledger" id="em-save-ledger-btn">📒 Save Ledger</button>
+      <button class="em-btn em-btn--stock" id="em-save-stock-btn">📦 Save Stock</button>
       <button class="em-btn em-btn--memory" id="em-save-memory-btn">🧠 Save Memory</button>
       <button class="em-btn em-btn--chars" id="em-chars-btn">👤 Characters</button>
       <button class="em-btn em-btn--map"   id="em-map-btn">🗺 Open Map</button>
@@ -552,6 +554,40 @@
     } finally {
       saveBtn.disabled = false;
       saveBtn.textContent = '📒 Save Ledger';
+    }
+  });
+
+  document.getElementById('em-save-stock-btn').addEventListener('click', async () => {
+    const saveBtn = document.getElementById('em-save-stock-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ Saving…';
+
+    try {
+      const inventory = extractWarehouseInventoryFromModal();
+      if (!inventory) throw new Error('Open the Warehouse Ledger modal first.');
+      if (!inventory.items.length) throw new Error('No inventory items found — open the Inventory panel in the modal.');
+      if (!inventory.warehouseName) throw new Error('Could not identify this warehouse.');
+
+      let tileCoords = null;
+      try {
+        const { cx, cy } = getMapGridContext();
+        tileCoords = { x: cx, y: cy };
+      } catch (_) { /* no map grid visible right now — that's fine */ }
+
+      const result = await postStockSnapshot({
+        warehouse_name: inventory.warehouseName,
+        city_name: inventory.cityName,
+        tile_x: tileCoords ? tileCoords.x : null,
+        tile_y: tileCoords ? tileCoords.y : null,
+        items: inventory.items,
+      });
+      showToast(`Stock saved: ${result.imported} item/quality row(s) synced.`, 'ok');
+    } catch (err) {
+      showToast('Stock save failed: ' + err.message, 'err');
+      console.error('[EverborneMap]', err);
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = '📦 Save Stock';
     }
   });
 
@@ -832,16 +868,24 @@
   // name — via extractCharacterName() — before anything is sent to the
   // server. Rows we can't confidently attribute are skipped rather than
   // guessed at.
-  function extractWarehouseLedgerFromModal() {
-    const modal = findVisibleModalContent('#warehouseLedgerModal');
-    if (!modal) return null;
-
+  // Shared by the ledger and inventory scrapers below — both live inside
+  // the same #warehouseLedgerModal, identified the same way.
+  function extractWarehouseIdentity(modal) {
     const warehouseName = modal.querySelector('.modal-title')?.textContent.trim() || null;
 
     // Summary block's second line reads either "No city registered" or the city name.
     const summaryCityEl = modal.querySelector('.warehouse-ledger-summary .text-muted');
     let cityName = summaryCityEl ? summaryCityEl.textContent.trim() : null;
     if (cityName && /no city registered/i.test(cityName)) cityName = null;
+
+    return { warehouseName, cityName };
+  }
+
+  function extractWarehouseLedgerFromModal() {
+    const modal = findVisibleModalContent('#warehouseLedgerModal');
+    if (!modal) return null;
+
+    const { warehouseName, cityName } = extractWarehouseIdentity(modal);
 
     const rows = Array.from(modal.querySelectorAll('#warehouse-ledger-body tr[data-created]'));
     const entries = [];
@@ -893,6 +937,44 @@
     }
 
     return { warehouseName, cityName, entries, skippedSelfUnresolved };
+  }
+
+  // ── Warehouse inventory (real, scanned quantities) ─────────────────────
+  // A separate panel inside the same #warehouseLedgerModal — grouped by
+  // item name, each group expandable into its quality tiers. This is the
+  // game's own count, distinct from (and a check against) the ledger-log-
+  // derived estimate: "52 Black Shroomhound Fur" broken into per-quality
+  // rows ("Quality 41 → 9", "Quality 39 → 8", ...) summing back to 52.
+  function extractWarehouseInventoryFromModal() {
+    const modal = findVisibleModalContent('#warehouseLedgerModal');
+    if (!modal) return null;
+
+    const { warehouseName, cityName } = extractWarehouseIdentity(modal);
+
+    const groups = Array.from(modal.querySelectorAll('#warehouse-inventory-groups .warehouse-ledger-group'));
+    const items = [];
+
+    for (const group of groups) {
+      const nameSpan = group.querySelector('button .d-flex > span:first-child');
+      if (!nameSpan) continue;
+      // The button label is "<total qty> <item name>" — strip the leading count.
+      const match = /^\s*\d+\s+(.+)$/.exec(nameSpan.textContent.trim());
+      const name = (match ? match[1] : nameSpan.textContent).trim();
+      if (!name) continue;
+
+      const qualityRows = Array.from(group.querySelectorAll('.warehouse-ledger-quality-list > div'));
+      for (const row of qualityRows) {
+        const spans = row.querySelectorAll('span');
+        if (spans.length < 2) continue;
+        const qualityMatch = /Quality\s*(\d+)/.exec(spans[0].textContent);
+        const quality = qualityMatch ? Number(qualityMatch[1]) : null;
+        const quantity = Number(spans[1].textContent.trim());
+        if (!Number.isFinite(quantity)) continue;
+        items.push({ item: name, quality, quantity });
+      }
+    }
+
+    return { warehouseName, cityName, items };
   }
 
   // ── Memory modal ──────────────────────────────────────────────────────
@@ -1177,6 +1259,35 @@
           'X-API-Key': key,
         },
         data: JSON.stringify({ entries }),
+        onload(response) {
+          if (response.status === 401) return reject(new Error('Invalid API key.'));
+          if (response.status < 200 || response.status >= 300) {
+            let msg = `Server error (${response.status})`;
+            try { msg = JSON.parse(response.responseText).error || msg; } catch {}
+            return reject(new Error(msg));
+          }
+          resolve(JSON.parse(response.responseText));
+        },
+        onerror() { reject(new Error('Could not reach map server. Is it running?')); },
+      });
+    });
+  }
+
+  function postStockSnapshot(payload) {
+    return new Promise((resolve, reject) => {
+      const key = getApiKey();
+      if (!key) {
+        return reject(new Error('No API key set. Open ⚙ Settings to configure it.'));
+      }
+
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: `${getServer()}/api/warehouses/stock-snapshot`,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': key,
+        },
+        data: JSON.stringify(payload),
         onload(response) {
           if (response.status === 401) return reject(new Error('Invalid API key.'));
           if (response.status < 200 || response.status >= 300) {
