@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      2.0.0
+// @version      2.0.1
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -604,17 +604,26 @@
       if (!buildings.length) throw new Error('No buildings found in the panel.');
 
       // Unlike the ledger/stock scrapers, there's no location info in this
-      // panel at all — the world map must be visible so we know which tile
-      // to attach these buildings to.
-      const { cx, cy } = getMapGridContext();
+      // panel at all — and the character/city panel it lives in replaces
+      // the world map grid rather than overlaying it, so auto-detection
+      // almost never has both at once. Same fallback as Save Gather: ask
+      // for the coordinates by hand when the grid isn't there to read.
+      let tileCoords = null;
+      try {
+        const { cx, cy } = getMapGridContext();
+        tileCoords = { x: cx, y: cy };
+      } catch (err) {
+        tileCoords = await promptForTileCoordinates();
+        if (!tileCoords) throw new Error('Coordinate entry cancelled.');
+      }
 
       const result = await postTile({
-        x: cx,
-        y: cy,
+        x: tileCoords.x,
+        y: tileCoords.y,
         buildings,
         merge: true,
       });
-      showToast(`Buildings saved: ${buildings.length} found at (${cx}, ${cy}).`, 'ok');
+      showToast(`Buildings saved: ${buildings.length} found at (${tileCoords.x}, ${tileCoords.y}).`, 'ok');
     } catch (err) {
       showToast('Buildings save failed: ' + err.message, 'err');
       console.error('[EverborneMap]', err);
