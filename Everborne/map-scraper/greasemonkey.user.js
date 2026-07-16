@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      2.0.1
+// @version      2.1.0
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -605,16 +605,25 @@
 
       // Unlike the ledger/stock scrapers, there's no location info in this
       // panel at all — and the character/city panel it lives in replaces
-      // the world map grid rather than overlaying it, so auto-detection
-      // almost never has both at once. Same fallback as Save Gather: ask
-      // for the coordinates by hand when the grid isn't there to read.
+      // the world map grid rather than overlaying it, so both are almost
+      // never available at once. Three tiers: read the grid live if it's
+      // there; otherwise fall back to the last position the background
+      // poller saw (see refreshCachedPosition); otherwise ask by hand.
       let tileCoords = null;
+      let source = 'live';
       try {
         const { cx, cy } = getMapGridContext();
         tileCoords = { x: cx, y: cy };
+        refreshCachedPosition(); // we're right here — keep the cache fresh too
       } catch (err) {
-        tileCoords = await promptForTileCoordinates();
-        if (!tileCoords) throw new Error('Coordinate entry cancelled.');
+        if (cachedPosition) {
+          tileCoords = { x: cachedPosition.x, y: cachedPosition.y };
+          source = `cached, ${cachedPositionAge()}`;
+        } else {
+          tileCoords = await promptForTileCoordinates();
+          if (!tileCoords) throw new Error('Coordinate entry cancelled.');
+          source = 'entered manually';
+        }
       }
 
       const result = await postTile({
@@ -623,7 +632,7 @@
         buildings,
         merge: true,
       });
-      showToast(`Buildings saved: ${buildings.length} found at (${tileCoords.x}, ${tileCoords.y}).`, 'ok');
+      showToast(`Buildings saved: ${buildings.length} found at (${tileCoords.x}, ${tileCoords.y}) [${source}].`, 'ok');
     } catch (err) {
       showToast('Buildings save failed: ' + err.message, 'err');
       console.error('[EverborneMap]', err);
@@ -758,6 +767,41 @@
 
     return { mapGrid, tileWraps, worldWidth, cx, cy };
   }
+
+  // ── Cached position (background) ────────────────────────────────────
+  // The character/city panel that hosts the Buildings tab replaces the
+  // world map grid entirely rather than overlaying it, so by the time
+  // that tab is open there's nothing left to read a tile position from.
+  // Keep a lightweight, continuously-refreshed cache of the last known
+  // position (and character, in case that's ever useful) instead, so
+  // Save Buildings doesn't need the map to be visible at the exact
+  // moment it's clicked — just at some point recently.
+  let cachedPosition = null; // { x, y, characterName, cachedAt }
+
+  function refreshCachedPosition() {
+    try {
+      const { cx, cy } = getMapGridContext();
+      cachedPosition = {
+        x: cx,
+        y: cy,
+        characterName: extractCharacterName() || null,
+        cachedAt: Date.now(),
+      };
+    } catch (_) {
+      // Map grid not visible right now — leave whatever was cached before alone.
+    }
+  }
+
+  function cachedPositionAge() {
+    if (!cachedPosition) return '';
+    const mins = Math.floor((Date.now() - cachedPosition.cachedAt) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins === 1) return '1 minute ago';
+    return `${mins} minutes ago`;
+  }
+
+  refreshCachedPosition();
+  setInterval(refreshCachedPosition, 3000);
 
   function extractLocDescData() {
     const cityEl = document.querySelector('#locDesc h4');
