@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      1.9.0
+// @version      2.0.0
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -64,6 +64,7 @@
     .em-btn--gather { background: #1e2535; color: #b2d5a7; border: 1px solid rgba(178,213,167,0.35); }
     .em-btn--ledger { background: #1e2535; color: #7fb0e0; border: 1px solid rgba(127,176,224,0.35); }
     .em-btn--stock { background: #1e2535; color: #a8d08d; border: 1px solid rgba(168,208,141,0.35); }
+    .em-btn--buildings { background: #1e2535; color: #e0a97f; border: 1px solid rgba(224,169,127,0.35); }
     .em-btn--memory { background: #1e2535; color: #c99fe0; border: 1px solid rgba(201,159,224,0.35); }
     .em-btn--toolbox { background: #2a3448; color: #f0dfbf; border: 1px solid rgba(240,223,191,0.28); }
     .em-btn--chars.has-skills { background: #1a2e1a; color: #7ec87e; border: 1px solid rgba(80,200,80,0.30); }
@@ -289,6 +290,7 @@
       <button class="em-btn em-btn--gather" id="em-save-res-btn">🌿 Save Gather</button>
       <button class="em-btn em-btn--ledger" id="em-save-ledger-btn">📒 Save Ledger</button>
       <button class="em-btn em-btn--stock" id="em-save-stock-btn">📦 Save Stock</button>
+      <button class="em-btn em-btn--buildings" id="em-save-buildings-btn">🏘 Save Buildings</button>
       <button class="em-btn em-btn--memory" id="em-save-memory-btn">🧠 Save Memory</button>
       <button class="em-btn em-btn--chars" id="em-chars-btn">👤 Characters</button>
       <button class="em-btn em-btn--map"   id="em-map-btn">🗺 Open Map</button>
@@ -588,6 +590,37 @@
     } finally {
       saveBtn.disabled = false;
       saveBtn.textContent = '📦 Save Stock';
+    }
+  });
+
+  document.getElementById('em-save-buildings-btn').addEventListener('click', async () => {
+    const saveBtn = document.getElementById('em-save-buildings-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ Saving…';
+
+    try {
+      const buildings = extractBuildingsFromPanel();
+      if (!buildings) throw new Error('Open the Buildings tab first.');
+      if (!buildings.length) throw new Error('No buildings found in the panel.');
+
+      // Unlike the ledger/stock scrapers, there's no location info in this
+      // panel at all — the world map must be visible so we know which tile
+      // to attach these buildings to.
+      const { cx, cy } = getMapGridContext();
+
+      const result = await postTile({
+        x: cx,
+        y: cy,
+        buildings,
+        merge: true,
+      });
+      showToast(`Buildings saved: ${buildings.length} found at (${cx}, ${cy}).`, 'ok');
+    } catch (err) {
+      showToast('Buildings save failed: ' + err.message, 'err');
+      console.error('[EverborneMap]', err);
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = '🏘 Save Buildings';
     }
   });
 
@@ -975,6 +1008,32 @@
     }
 
     return { warehouseName, cityName, items };
+  }
+
+  // ── City buildings panel ────────────────────────────────────────────────
+  // The character/city overview's "Buildings" tab (#bList) — a flat list of
+  // rows grouped visually under collapsible district headers, but the
+  // districts carry no data we currently track, so this just flattens every
+  // row into {name, type, description}, the same shape as a hand-entered
+  // tile building. This panel has no location info of its own — the save
+  // handler below attaches it to whichever tile the world map currently has
+  // centered, so the character needs to be standing at (or the map centered
+  // on) the right city when this is used.
+  function extractBuildingsFromPanel() {
+    const list = document.getElementById('bList');
+    if (!list) return null;
+
+    const buildings = [];
+    const rows = Array.from(list.querySelectorAll('.tab-list-row-building'));
+    for (const row of rows) {
+      const nameLink = row.querySelector('.tab-col-name a');
+      const name = nameLink ? nameLink.textContent.trim() : '';
+      if (!name) continue;
+      const type = (row.querySelector('.tab-col-type')?.textContent || '').trim();
+      const description = (row.querySelector('.collapse.col-12 p')?.textContent || '').trim();
+      buildings.push({ name, type, description });
+    }
+    return buildings;
   }
 
   // ── Memory modal ──────────────────────────────────────────────────────
