@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      2.1.0
+// @version      2.1.1
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -669,16 +669,28 @@
     }
   });
 
+  // Pulls the numeric tile id out of a decoded "<numericId>|<hash>" string —
+  // or, since the game started prefixing it, "<prefix>:<numericId>|<hash>"
+  // (e.g. "0:2135|228a2e9e..."). parseInt alone stops at the first ':' and
+  // silently returns just the prefix, which is what broke world-position
+  // detection: always take the last ':'-separated segment before the '|' so
+  // both the old and new shapes resolve to the same numeric id.
+  function parseNumericIdFromDecoded(decoded) {
+    const idPart = decoded.split('|')[0];
+    const idStr = idPart.includes(':') ? idPart.split(':').pop() : idPart;
+    const id = parseInt(idStr, 10);
+    return isNaN(id) ? null : id;
+  }
+
   // Decode the numeric tile ID from a tile image src.
-  // The src is /tile.php?id=<base64> where base64 decodes to "<numericId>|<hash>".
+  // The src is /tile.php?id=<base64> where base64 decodes to "<numericId>|<hash>"
+  // (see parseNumericIdFromDecoded for the "<prefix>:<numericId>|<hash>" case).
   // e.g. "MjI0NXw..." → "2245|60ec..." → 2245
   function decodeTileIdFromSrc(src) {
     try {
       const match = src.match(/[?&]id=([A-Za-z0-9+/=]+)/);
       if (!match) return null;
-      const decoded = atob(match[1]);
-      const id = parseInt(decoded.split('|')[0], 10);
-      return isNaN(id) ? null : id;
+      return parseNumericIdFromDecoded(atob(match[1]));
     } catch (e) {
       return null;
     }
@@ -1420,9 +1432,7 @@
   function decodeObfId(obf) {
     if (!obf) return null;
     try {
-      const decoded = atob(obf);
-      const id = parseInt(decoded.split('|')[0], 10);
-      return isNaN(id) ? null : id;
+      return parseNumericIdFromDecoded(atob(obf));
     } catch (e) {
       return null;
     }
