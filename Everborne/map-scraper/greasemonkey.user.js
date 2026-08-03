@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      2.1.1
+// @version      2.2.0
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -1427,14 +1427,35 @@
   }
 
   // ── Watchtower (lookout) support ────────────────────────────────────
+  // The grid's tile buttons used to carry a decodable data-tile-obf id
+  // ("<id>|<hash>", same scheme as the main map), which let every tile's
+  // world position be computed directly. The game has since replaced that
+  // with an opaque, per-session data-watchtower-token that encodes nothing
+  // positional at all — so per-tile id decoding is gone for good here.
+  //
+  // What's still true: the grid is always a fixed 5×5 layout centered on
+  // the watchtower's own tile (button index 12, labeled "Watchtower"), in
+  // fixed row-major reading order — verified against a live capture, every
+  // compass label ("Far Northwest", "North", …) lines up with a fixed
+  // (dx, dy) offset from center. So instead of decoding each tile, we only
+  // need to learn the ONE anchor point (the watchtower's own position) and
+  // derive every other tile from that fixed offset table.
+  const WT_GRID_COLS = 5;
+  const WT_CENTER_OFFSET = Math.floor(WT_GRID_COLS / 2);
 
-  // Decode numeric tile ID from a data-tile-obf base64 value ("<id>|<hash>").
-  function decodeObfId(obf) {
-    if (!obf) return null;
+  // Same three-tier fallback as Save Buildings: read the live map grid if
+  // it's there, fall back to the background-cached last known position,
+  // and only prompt by hand if neither is available.
+  async function resolveWatchtowerAnchor() {
     try {
-      return parseNumericIdFromDecoded(atob(obf));
-    } catch (e) {
-      return null;
+      const { cx, cy } = getMapGridContext();
+      refreshCachedPosition();
+      return { x: cx, y: cy };
+    } catch (err) {
+      if (cachedPosition) return { x: cachedPosition.x, y: cachedPosition.y };
+      const coords = await promptForTileCoordinates();
+      if (!coords) throw new Error('Coordinate entry cancelled.');
+      return coords;
     }
   }
 
@@ -1443,33 +1464,22 @@
     if (grid.querySelector('.em-wt-save')) return;
 
     const buttons = Array.from(grid.querySelectorAll('.wt-tile-btn'));
-    if (buttons.length < 6) return; // need at least two rows to compute worldWidth
+    if (buttons.length !== WT_GRID_COLS * WT_GRID_COLS) return; // not the 5×5 layout we know how to map
 
-    const ids = buttons.map(b => decodeObfId(b.dataset.tileObf));
-
-    // worldWidth = vertical distance between rows = tile[colCount].id - tile[0].id
-    // The grid CSS declares 5 columns.
-    const COL_COUNT = 5;
-    let worldWidth = null;
-    for (let i = 0; i + COL_COUNT < ids.length; i++) {
-      if (ids[i] !== null && ids[i + COL_COUNT] !== null) {
-        const diff = ids[i + COL_COUNT] - ids[i];
-        if (diff > 0) { worldWidth = diff; break; }
-      }
-    }
-    if (!worldWidth) return;
+    // Resolved lazily on first save click, then shared by every tile in
+    // this grid so the user isn't prompted more than once per watchtower visit.
+    let anchorPromise = null;
 
     buttons.forEach((btn, idx) => {
-      const tileId = ids[idx];
-      if (tileId === null) return;
-
-      const worldX = tileId % worldWidth;
-      const worldY = Math.floor(tileId / worldWidth);
+      const dx = (idx % WT_GRID_COLS) - WT_CENTER_OFFSET;
+      const dy = Math.floor(idx / WT_GRID_COLS) - WT_CENTER_OFFSET;
 
       const saveBtn = document.createElement('button');
       saveBtn.className = 'em-wt-save';
       saveBtn.type = 'button';
-      saveBtn.title = `Save (${worldX}, ${worldY}) to map`;
+      saveBtn.title = (dx === 0 && dy === 0)
+        ? 'Save the watchtower\'s own tile'
+        : `Save this tile (${dx >= 0 ? '+' : ''}${dx}, ${dy >= 0 ? '+' : ''}${dy} from the watchtower)`;
       saveBtn.textContent = '📍';
 
       saveBtn.addEventListener('click', async (e) => {
@@ -1477,6 +1487,11 @@
         saveBtn.disabled = true;
         saveBtn.textContent = '⏳';
         try {
+          if (!anchorPromise) anchorPromise = resolveWatchtowerAnchor();
+          const anchor = await anchorPromise;
+          const worldX = anchor.x + dx;
+          const worldY = anchor.y + dy;
+
           const imgEl = btn.querySelector('img');
           let imageBase64 = null;
           if (imgEl && imgEl.src) {
@@ -1491,6 +1506,9 @@
             features: [],
             imageBase64,
           });
+        } catch (err) {
+          anchorPromise = null; // let the next click retry instead of being stuck on a cancelled prompt
+          showToast('Could not determine this tile\'s position: ' + err.message, 'err');
         } finally {
           saveBtn.disabled = false;
           saveBtn.textContent = '📍';
