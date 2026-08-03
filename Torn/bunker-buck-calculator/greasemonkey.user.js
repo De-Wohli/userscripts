@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn - Big Al's Bunker Buck Calculator
 // @namespace    https://github.com/torn-bunker-bb-calculator
-// @version      0.7.0
-// @description  Live cache prices + Bunker Buck value calculator for Big Al's Bunker. Highlights profitable buys on the Item Market/Bazaar, shows a floating Bunker-vs-market comparison (backed by weav3r's real auction sales history) when an item's detail view is open, and max profitable bid hints on the Auction House. Uses weav3r.dev and the official Torn API.
+// @version      0.8.0
+// @description  Live cache prices + Bunker Buck value calculator for Big Al's Bunker. Shows an integrated value line (Bunker Bucks vs. weav3r's real market sales, whichever is higher) directly in a weapon/armor's detail view on the Item Market, Bazaar, and Auction House. Uses weav3r.dev and the official Torn API.
 // @author       Fuyune [3387109]
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Torn/bunker-buck-calculator
 // @supportURL   https://github.com/De-Wohli/userscripts/issues
@@ -402,67 +402,16 @@
     #tbb-verdict.tbb-neutral { background: rgba(140,140,140,0.15); color: #c8c8c8 !important; }
     .tbb-note { color: #8a90a0 !important; font-size: 10.5px; margin-top: 6px; }
     .tbb-note strong { color: #e6e6e6 !important; }
-    .tbb-badge {
-      display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 3px;
-      font-size: 10.5px; font-weight: 600; vertical-align: middle;
-    }
-    .tbb-badge.tbb-good { background: #1f4d2e; color: #7ee69a !important; }
-    .tbb-badge.tbb-bad { background: #4d1f1f; color: #ff9a9a !important; }
-    .tbb-badge.tbb-bid-hint { background: #1c2b40; color: #8ec9ff !important; }
-    .tbb-badge.tbb-auction-hint {
-      display: block; clear: both; box-sizing: border-box; width: 100%;
-      margin: 4px 0 0; padding: 3px 6px;
-      font: 11px/1.3 -apple-system, Segoe UI, Roboto, sans-serif;
-    }
-    /* outline (not border) so it doesn't shift Torn's own tile layout/padding */
-    .tbb-profitable-tile {
-      outline: 2px solid #3ecf66 !important;
-      outline-offset: -2px;
-      background: rgba(62,207,102,0.12) !important;
-      border-radius: 6px;
-    }
     .tbb-refresh-spin { animation: tbb-spin 0.8s linear infinite; display: inline-block; }
     @keyframes tbb-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-    #tbb-item-modal {
-      position: fixed;
-      z-index: 999998;
-      width: 300px;
-      background: #1b1e23;
-      color: #e6e6e6 !important;
-      border: 1px solid #33373f;
-      border-radius: 8px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.45);
-      font: 12px/1.4 -apple-system, Segoe UI, Roboto, sans-serif;
-      top: 90px;
-      left: 400px;
-    }
-    #tbb-item-modal * { box-sizing: border-box; color: #e6e6e6; }
-    #tbb-item-modal-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 8px 10px; cursor: move; background: #23272e;
-      border-bottom: 1px solid #33373f; border-radius: 8px 8px 0 0;
-      user-select: none;
-    }
-    #tbb-item-modal-header strong { font-size: 12.5px; color: #f2c94c !important; }
-    #tbb-item-modal-close {
-      background: none; border: none; color: #aab0bb !important; cursor: pointer;
-      font-size: 13px; padding: 2px 4px;
-    }
-    #tbb-item-modal-close:hover { color: #fff !important; }
-    #tbb-item-modal-body { padding: 10px; }
-    .tbb-item-modal-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 11.5px; }
-    .tbb-item-modal-row span { color: #8a90a0 !important; }
-    .tbb-item-modal-row strong { color: #e6e6e6 !important; }
-    #tbb-item-modal-verdict {
-      margin-top: 8px; padding: 8px; border-radius: 6px; font-size: 12px; font-weight: 600;
-      text-align: center;
-    }
-    #tbb-item-modal-verdict.tbb-good { background: rgba(60,180,90,0.18); color: #6adf8f !important; }
-    #tbb-item-modal-verdict.tbb-bad { background: rgba(220,80,80,0.18); color: #ff8a8a !important; }
-    #tbb-item-modal-verdict.tbb-neutral { background: rgba(140,140,140,0.15); color: #c8c8c8 !important; }
-    #tbb-item-modal-notes {
-      display: none; margin-top: 6px; font-size: 10.5px; color: #8a90a0 !important;
+    /* Inserted directly into Torn's own item detail panel, not a
+       separate window - kept deliberately plain/unobtrusive so it
+       reads as part of that panel rather than an injected overlay. */
+    .tbb-inline-value {
+      margin: 6px 12px; padding: 4px 8px; border-radius: 4px;
+      background: rgba(255,255,255,0.06); font-size: 12px; font-weight: 600;
+      color: #9fd3ff !important;
     }
   `);
 
@@ -567,41 +516,6 @@
   let latestCachePrices = [];
   let latestBBSummary = { avg: null, min: null, max: null };
   let latestItemsIndex = null; // { list, byName, byId } from Torn.itemsIndexed(), used by the DOM tagger
-
-  // Floating modal shown whenever a weapon/armor's "View Info" detail
-  // panel is open (see scanForItemInfoPanels/isPanelActive below) -
-  // separate from the main calculator panel so it can be repositioned
-  // independently.
-  let itemModal = null;
-
-  function buildItemModal() {
-    const modal = document.createElement('div');
-    modal.id = 'tbb-item-modal';
-    modal.style.display = 'none';
-    const pos = store.get('tbb_item_modal_pos', null);
-    if (pos) { modal.style.top = pos.top; modal.style.left = pos.left; }
-
-    modal.innerHTML = `
-      <div id="tbb-item-modal-header">
-        <strong id="tbb-item-modal-title">Item</strong>
-        <button id="tbb-item-modal-close" title="Hide">&#8211;</button>
-      </div>
-      <div id="tbb-item-modal-body">
-        <div class="tbb-item-modal-row"><span>Bunker trade-in</span><strong id="tbb-item-modal-bb">—</strong></div>
-        <div class="tbb-item-modal-row"><span>Market value (weav3r)</span><strong id="tbb-item-modal-market">—</strong></div>
-        <div class="tbb-item-modal-row"><span>This listing</span><strong id="tbb-item-modal-listing">—</strong></div>
-        <div id="tbb-item-modal-verdict" class="tbb-neutral"></div>
-        <div id="tbb-item-modal-notes"></div>
-      </div>
-    `;
-    document.body.appendChild(modal);
-
-    modal.querySelector('#tbb-item-modal-close').addEventListener('click', () => {
-      modal.style.display = 'none';
-    });
-    makeDraggable(modal, modal.querySelector('#tbb-item-modal-header'), 'tbb_item_modal_pos');
-    itemModal = modal;
-  }
 
   function renderCacheTable(panel, cachePrices, summary) {
     const container = panel.querySelector('#tbb-cache-table');
@@ -722,11 +636,16 @@
     panel.querySelector('#tbb-category').addEventListener('change', () => updateBonus2Availability(panel));
   }
 
+  // panel is null when the persistent calculator UI isn't built on this
+  // page (see init()) - the underlying data fetch still needs to run
+  // everywhere, since the inline per-item value line depends on
+  // latestItemsIndex/latestBBSummary regardless of whether that UI
+  // exists on the current page.
   async function refreshPrices(panel) {
-    const refreshBtn = panel.querySelector('#tbb-refresh');
-    refreshBtn.classList.add('tbb-refresh-spin');
+    const refreshBtn = panel?.querySelector('#tbb-refresh');
+    refreshBtn?.classList.add('tbb-refresh-spin');
     try {
-      if (!getApiKey()) {
+      if (panel && !getApiKey()) {
         panel.querySelector('#tbb-cache-table').innerHTML =
           '<div class="tbb-note">Set your Torn API key (gear icon) to pull official market prices. weav3r-only data still loads without one.</div>';
       }
@@ -737,13 +656,15 @@
       latestItemsIndex = items;
       latestCachePrices = prices;
       latestBBSummary = summarizeBB(latestCachePrices);
-      renderCacheTable(panel, latestCachePrices, latestBBSummary);
-      runCalculator(panel);
+      if (panel) {
+        renderCacheTable(panel, latestCachePrices, latestBBSummary);
+        runCalculator(panel);
+      }
       runScans(); // retry anything the page-scan couldn't evaluate before this data was ready
     } catch (e) {
-      panel.querySelector('#tbb-cache-table').innerHTML = `<div class="tbb-note">Error: ${e.message}</div>`;
+      if (panel) panel.querySelector('#tbb-cache-table').innerHTML = `<div class="tbb-note">Error: ${e.message}</div>`;
     } finally {
-      refreshBtn.classList.remove('tbb-refresh-spin');
+      refreshBtn?.classList.remove('tbb-refresh-spin');
     }
   }
 
@@ -774,48 +695,14 @@
   // ------------------------------------------------------------------
   // DOM tagging shared helpers
   //
-  // Confirmed against real markup from the Item Market and Bazaar pages.
-  // Rarity is NOT rendered as visible text on either page - it's a
-  // "glow-<color>" class on the item image - and bonuses are marked by
-  // a "data-bonus-attachment-title" attribute (which correctly excludes
-  // the damage/accuracy stat icons, which look similar but lack it).
-  // Both markers are plain, non-hashed conventions shared across pages.
-  //
   // The outer listing container IS a hashed CSS-module class (e.g.
   // "itemTile___smVqb" / "itemDescription___TknAN"), so only its stable
-  // prefix (before "___") is matched - the hash suffix changes on every
-  // Torn deploy but the prefix tracks the source component name.
-  //
-  // Big Al's Bunker (page.php?sid=bunker) hasn't been sampled yet, so
-  // this may not tag anything there until its markup is confirmed too.
+  // prefix (before "___") is matched in isPanelActive below - the hash
+  // suffix changes on every Torn deploy but the prefix tracks the
+  // source component name.
   // ------------------------------------------------------------------
 
   const CONTAINER_SELECTOR = '[class*="itemTile___"], [class*="itemDescription___"]';
-  const taggedElements = new WeakSet();
-  const skippedElements = new WeakSet();
-
-  function byTestIdOrClassPrefix(root, testId, classPrefixes) {
-    const byTestId = root.querySelector(`[data-testid="${testId}"]`);
-    if (byTestId) return byTestId;
-    for (const prefix of classPrefixes) {
-      const el = root.querySelector(`[class*="${prefix}___"]`);
-      if (el) return el;
-    }
-    return null;
-  }
-
-  function detectRarity(container) {
-    const el = container.querySelector(
-      '[class*="glow-yellow"], [class*="glow-orange"], [class*="glow-red"]'
-    );
-    const m = el?.className.match(/glow-(yellow|orange|red)/i);
-    return m ? m[1][0].toUpperCase() + m[1].slice(1).toLowerCase() : null;
-  }
-
-  function parsePrice(text) {
-    const m = (text || '').match(/\$\s?[\d,]+/);
-    return m ? parseFloat(m[0].replace(/[^0-9.]/g, '')) : null;
-  }
 
   // The item ID is embedded in the "View Info" button's aria-controls
   // (e.g. "wai-itemInfo-657") and in the detail panel's own id
@@ -837,84 +724,19 @@
   }
 
   // ------------------------------------------------------------------
-  // Item Market / Bazaar - highlight potentially profitable buys
-  //
-  // A quiet visual cue rather than another text badge: green-highlight
-  // a whole tile when buying it at the listed price and immediately
-  // trading it in for Bunker Bucks would net more than it cost. Unlike
-  // the removed sell-vs-trade-in badge, this only marks the good case -
-  // no highlight is shown for listings that aren't worth it.
-  // ------------------------------------------------------------------
-
-  function evaluateTileProfitability(container, rarity) {
-    const bonusCount = container.querySelectorAll('[data-bonus-attachment-title]').length;
-    const nameEl = byTestIdOrClassPrefix(container, 'name', ['name']);
-    const priceEl = byTestIdOrClassPrefix(container, 'price', ['priceAndTotal', 'price']);
-    if (!nameEl || !priceEl) return null;
-
-    const controlsEl = container.querySelector('[aria-controls^="wai-itemInfo-"]');
-    const id = itemIdFromAriaControls(controlsEl?.getAttribute('aria-controls'));
-    const category = categoryForItem({ id, name: nameEl.textContent.trim() });
-    const price = parsePrice(priceEl.textContent);
-    if (!category || !price) return null;
-
-    const bbCount = bbCountFor(category, rarity, bonusCount);
-    const bbPrice = currentBBPrice();
-    if (!bbCount || !bbPrice) return null;
-
-    return { price, bbCount, tradeInValue: bbCount * bbPrice };
-  }
-
-  function highlightTile(container, result) {
-    container.classList.add('tbb-profitable-tile');
-    container.title = `Bunker trade-in: ${result.bbCount} BB ≈ ${fmtMoney(result.tradeInValue)} vs buy price ${fmtMoney(result.price)} - profit of ${fmtMoney(result.tradeInValue - result.price)} if traded in`;
-  }
-
-  function scanForProfitableTiles(root) {
-    if (!isItemMarketPage() && !isBazaarPage()) return;
-
-    for (const container of root.querySelectorAll(CONTAINER_SELECTOR)) {
-      if (taggedElements.has(container) || skippedElements.has(container)) continue;
-      try {
-        const rarity = detectRarity(container);
-        if (!rarity) {
-          skippedElements.add(container); // not a ranked/bonus item - never becomes one
-          continue;
-        }
-        const result = evaluateTileProfitability(container, rarity);
-        if (!result) continue; // e.g. items index not loaded yet - retry next scan
-        if (result.tradeInValue > result.price) highlightTile(container, result);
-        taggedElements.add(container); // decided either way - price won't change for this listing
-      } catch (e) {
-        console.warn('[BB Calc] failed to evaluate tile profitability', e, container);
-        skippedElements.add(container);
-      }
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // Auction House (amarket.php) - max profitable bid hint
+  // Auction House id resolution
   //
   // This page is NOT the React redesign the Item Market/Bazaar use -
   // it's Torn's older server-rendered markup with plain, stable class
   // names (no hashed "___xxxxx" suffixes at all here). Each listing is
   // an <li id="..."> inside ul.items-list, carrying an "item" attribute
   // with the numeric item ID directly - no need to parse it out of an
-  // aria-controls/href string. Real weapon bonuses live in
-  // ".iconsbonuses .bonus-attachment-icons"; the damage/accuracy stat
-  // icons use a visually similar but differently-named ".bonus-attachment"
-  // wrapper (no "-icons" suffix), which is what distinguishes them.
-  //
-  // The ceiling shown doesn't need the current bid at all: it's just
-  // the Bunker trade-in value for that rarity/bonus combo, since paying
-  // more than that guarantees a loss versus just trading the item in.
-  // The current bid (".c-bid-wrap") is read only to flag when it has
-  // already exceeded that ceiling.
+  // aria-controls/href string like the React pages require. Still
+  // needed for the detail-view value display below, to resolve which
+  // item its embedded ".show-item-info" panel belongs to.
   // ------------------------------------------------------------------
 
-  const AUCTION_LISTING_SELECTOR = 'ul.items-list > li[id]';
-
-  function auctionListingId(li) {
+  function auctionListItemId(li) {
     const withAttr = li.querySelector('[item]');
     const attrId = parseInt(withAttr?.getAttribute('item'), 10);
     if (!Number.isNaN(attrId)) return attrId;
@@ -923,97 +745,30 @@
     return m ? parseInt(m[1], 10) : null;
   }
 
-  function evaluateAuctionListing(li) {
-    const rarity = detectRarity(li);
-    if (!rarity) return null;
-
-    const bonusCount = li.querySelectorAll('.bonus-attachment-icons').length;
-    const id = auctionListingId(li);
-    const name = li.querySelector('.item-name')?.textContent.trim();
-    const category = categoryForItem({ id, name });
-    if (!category) return null;
-
-    const bbCount = bbCountFor(category, rarity, bonusCount);
-    const bbPrice = currentBBPrice();
-    if (!bbCount || !bbPrice) return null;
-
-    const currentBid = parsePrice(li.querySelector('.c-bid-wrap')?.textContent);
-    return { bbCount, tradeInValue: bbCount * bbPrice, currentBid };
-  }
-
-  // Appended at the end of the <li> rather than spliced in between the
-  // row's other children: this page lays listings out with floats (the
-  // "clear" div alongside it is a classic clearfix), and inserting a
-  // new element mid-row broke that flow. clear:both + full width in
-  // the CSS keeps it a clean line below the row regardless.
-  function tagAuctionListing(li, result) {
-    const overThreshold = result.currentBid != null && result.currentBid >= result.tradeInValue;
-    const badge = document.createElement('div');
-    badge.className = 'tbb-badge tbb-auction-hint ' + (overThreshold ? 'tbb-bad' : 'tbb-bid-hint');
-    badge.title = `Bunker trade-in value for this rarity/bonus: ${result.bbCount} BB`;
-    badge.textContent = overThreshold
-      ? `Current bid already exceeds max profitable bid of ${fmtMoney(result.tradeInValue)}`
-      : `Max profitable bid: ${fmtMoney(result.tradeInValue)}`;
-    li.appendChild(badge);
-    return badge;
-  }
-
-  // Cheap fingerprint of what's currently rendered in this row. Paging
-  // through the Auction House reuses the same <li> nodes and rewrites
-  // their content via AJAX rather than creating fresh ones, so a plain
-  // "have I seen this node before" check (as used elsewhere in this
-  // file) goes stale the moment the node is recycled for a different
-  // item - this re-checks on every scan and only skips redoing the
-  // work when the row's content actually hasn't changed.
-  function auctionListingSignature(li) {
-    const bid = li.querySelector('.c-bid-wrap')?.textContent.trim() || '';
-    return `${auctionListingId(li)}|${bid}`;
-  }
-
-  const auctionRowState = new WeakMap(); // li -> { signature, badge }
-
-  function scanAuctionListings(root) {
-    if (!isAuctionHousePage()) return;
-
-    for (const li of root.querySelectorAll(AUCTION_LISTING_SELECTOR)) {
-      const signature = auctionListingSignature(li);
-      const prev = auctionRowState.get(li);
-      if (prev && prev.signature === signature) continue; // row unchanged since last pass
-
-      if (prev?.badge) prev.badge.remove(); // stale badge from before this node got recycled
-
-      try {
-        // Not a ranked item at all - genuinely permanent, safe to stop
-        // rechecking until the row's content itself changes.
-        if (!detectRarity(li)) {
-          auctionRowState.set(li, { signature, badge: null });
-          continue;
-        }
-
-        const result = evaluateAuctionListing(li);
-        if (!result) continue; // transient (price/items index not loaded yet) - retry, don't lock in
-        auctionRowState.set(li, { signature, badge: tagAuctionListing(li, result) });
-      } catch (e) {
-        console.warn('[BB Calc] failed to evaluate auction listing', e, li);
-        auctionRowState.set(li, { signature, badge: null });
-      }
-    }
-  }
-
   // ------------------------------------------------------------------
   // Item detail ("View Info") panel
   //
-  // Opened by clicking the (i) icon on a tile. Rarity lives in the
-  // "Quality:" row as a "<color>___<hash>" class - a different
-  // convention than the tile's "glow-<color>" - and each real
-  // weapon/armor bonus gets its own row labelled exactly "Bonus:".
-  // Counting those rows is more precise than counting bonus icons here,
-  // since (unlike on the tile) this panel's bonus icons don't carry a
-  // distinguishing attribute to tell them apart from the damage/
-  // accuracy/quality/coverage stat icons, which reuse similar classes.
+  // This same shared React "itemInfo___" component is reused wherever
+  // Torn shows a weapon/armor's details - Item Market, Bazaar, and the
+  // Auction House's embedded per-row view all confirmed identical here.
+  // Rarity lives in the "Quality:" row as a "<color>___<hash>" class,
+  // and each real bonus gets its own row labelled exactly "Bonus:".
+  //
+  // Two different flavors of this component are known and handled:
+  //   - React pages (Item Market, Bazaar): panel has id "wai-itemInfo-
+  //     <itemId>-<instance>", and a "View Info" trigger button on the
+  //     originating tile carries aria-expanded, toggling as this
+  //     specific panel opens/closes.
+  //   - Auction House: the panel has no id at all and is wrapped in a
+  //     ".show-item-info" div toggled via a literal inline
+  //     style="display:none", with the item id available instead via
+  //     an "item" attribute on the enclosing <li>.
+  // Player profile showcases are believed to reuse the same component
+  // (unverified) - if nothing appears there, one of these two flavor
+  // checks likely needs a third variant added once its markup is seen.
   // ------------------------------------------------------------------
 
-  const ITEM_INFO_SELECTOR = '[id^="wai-itemInfo-"]';
+  const ITEM_INFO_SELECTOR = '[id^="wai-itemInfo-"], .show-item-info [class*="itemInfo___"]';
 
   function propertyRows(panel, label) {
     const rows = [];
@@ -1075,30 +830,25 @@
     return null;
   }
 
-  // The detail panel doesn't repeat the specific listing's price, so
-  // this prefers the price off the tile that was expanded to open it
-  // (an adjacent list item) and falls back to the panel's own "Value:"
-  // row (Torn's average market value) if no such tile is found.
-  function findComparisonPrice(panel) {
-    let sib = panel.closest('li')?.previousElementSibling;
-    for (let i = 0; i < 3 && sib; i++, sib = sib.previousElementSibling) {
-      const tile = sib.matches?.(CONTAINER_SELECTOR) ? sib : sib.querySelector?.(CONTAINER_SELECTOR);
-      const priceEl = tile && byTestIdOrClassPrefix(tile, 'price', ['priceAndTotal', 'price']);
-      if (priceEl) return { price: parsePrice(priceEl.textContent), label: 'this listing' };
-    }
-    for (const row of propertyRows(panel, 'Value:')) {
-      const price = parsePrice(row.textContent);
-      if (price) return { price, label: 'avg. value - no exact listing price found' };
-    }
-    return null;
+  // React pages expose the item id via the panel's own id attribute;
+  // the Auction House's embedded panel has no id, so it falls back to
+  // the "item" attribute on the enclosing <li> instead.
+  function resolveItemId(panel) {
+    const direct = itemIdFromAriaControls(panel.id);
+    if (direct != null) return direct;
+    const li = panel.closest('li');
+    return li ? auctionListItemId(li) : null;
   }
 
   // itemName comes off the already-resolved id via latestItemsIndex
   // rather than scraping it from the description sentence ("The X is
   // a ... Weapon."), which would need fragile trimming/punctuation
-  // handling for no benefit - the id is already authoritative.
+  // handling for no benefit - the id is already authoritative. No
+  // longer depends on a specific listing's price at all: the display
+  // only needs Bunker value vs. weav3r's market value, not what one
+  // particular seller happens to be asking.
   function evaluateItemInfoPanel(panel) {
-    const id = itemIdFromAriaControls(panel.id);
+    const id = resolveItemId(panel);
     const rarity = detectRarityFromQualityRow(panel);
     if (!id || !rarity) return null;
 
@@ -1106,8 +856,7 @@
     const bonuses = bonusCount ? detectBonuses(panel) : [];
     const category = categoryForItem({ id });
     const itemName = latestItemsIndex?.byId.get(id)?.name;
-    const priceInfo = findComparisonPrice(panel);
-    if (!category || !itemName || !priceInfo) return null;
+    if (!category || !itemName) return null;
 
     const bbCount = bbCountFor(category, rarity, bonusCount);
     const bbPrice = currentBBPrice();
@@ -1121,20 +870,18 @@
       damage: detectStatValue(panel, 'Damage:'),
       accuracy: detectStatValue(panel, 'Accuracy:'),
       bonuses,
-      listingPrice: priceInfo.price,
-      priceLabel: priceInfo.label,
       bbCount,
       tradeInValue: bbCount * bbPrice,
     };
   }
 
-  // A tile's own "View Info" button carries aria-expanded, toggling
-  // true/false as that specific listing's panel opens/closes. This is
-  // the panel's originating tile (same lookup as findComparisonPrice),
-  // so it's used as the live "is this panel actually the one currently
-  // selected for details" signal - panels don't get untagged/removed
-  // from the DOM when closed, only visually collapsed.
+  // Panels never get removed from the DOM when closed, only visually
+  // collapsed, so this checks the live "is it actually open right now"
+  // signal for whichever of the two known flavors this panel is.
   function isPanelActive(panel) {
+    const ahWrapper = panel.closest('.show-item-info');
+    if (ahWrapper) return ahWrapper.style.display !== 'none';
+
     let sib = panel.closest('li')?.previousElementSibling;
     for (let i = 0; i < 3 && sib; i++, sib = sib.previousElementSibling) {
       const tile = sib.matches?.(CONTAINER_SELECTOR) ? sib : sib.querySelector?.(CONTAINER_SELECTOR);
@@ -1216,98 +963,82 @@
     }
   }
 
-  function renderItemModal(base, market, fetchingMarket) {
-    if (!itemModal) return;
-    itemModal.style.display = 'block';
-    itemModal.querySelector('#tbb-item-modal-title').textContent = `${base.itemName} · ${base.rarity}`;
-    itemModal.querySelector('#tbb-item-modal-bb').textContent = fmtMoney(base.tradeInValue);
-    itemModal.querySelector('#tbb-item-modal-listing').textContent =
-      base.listingPrice != null ? `${fmtMoney(base.listingPrice)} (${base.priceLabel})` : '—';
-
-    const marketEl = itemModal.querySelector('#tbb-item-modal-market');
-    if (fetchingMarket) {
-      marketEl.textContent = 'Loading…';
-    } else if (market?.fairEstimate != null) {
-      marketEl.textContent = `${fmtMoney(market.fairEstimate)} (${market.sampleSize} recent sales)`;
-    } else if (market?.cheapestAsk != null) {
-      marketEl.textContent = `${fmtMoney(market.cheapestAsk)} cheapest ask (${market.sampleSize} comps)`;
-    } else {
-      marketEl.textContent = 'No comparable listings found';
+  // Picks whichever is higher - Bunker trade-in or a realistic market
+  // sale - and reports which one, rather than showing every number
+  // separately. weav3r's fair-estimate (real auction sales history) is
+  // preferred as the "sell" figure; its live cheapest-ask is the
+  // fallback when no sales history exists for this exact combo.
+  function computeDisplayValue(base, market) {
+    const sellValue = market?.fairEstimate ?? market?.cheapestAsk ?? null;
+    if (sellValue != null && sellValue > base.tradeInValue) {
+      return { value: sellValue, source: 'Market Sales' };
     }
-
-    const notesEl = itemModal.querySelector('#tbb-item-modal-notes');
-    if (market?.notes?.length) {
-      notesEl.textContent = market.notes.join(' ');
-      notesEl.style.display = 'block';
-    } else {
-      notesEl.style.display = 'none';
-    }
-
-    const verdictEl = itemModal.querySelector('#tbb-item-modal-verdict');
-    const reference = market?.fairEstimate ?? market?.cheapestAsk ?? (fetchingMarket ? null : base.listingPrice);
-    if (reference == null) {
-      verdictEl.className = 'tbb-neutral';
-      verdictEl.textContent = fetchingMarket ? 'Comparing against market…' : 'Not enough data to compare.';
-    } else if (base.tradeInValue > reference) {
-      verdictEl.className = 'tbb-good';
-      verdictEl.textContent = `Bunker trade-in beats market by ${fmtMoney(base.tradeInValue - reference)}`;
-    } else {
-      verdictEl.className = 'tbb-bad';
-      verdictEl.textContent = `Market value beats Bunker trade-in by ${fmtMoney(reference - base.tradeInValue)}`;
-    }
+    return { value: base.tradeInValue, source: 'Bunker Bucks' };
   }
 
-  function hideItemModal() {
-    if (itemModal) itemModal.style.display = 'none';
-  }
-
-  const modalStateByPanel = new WeakMap(); // panel -> { base, marketValue, fetching }
-
-  function scanForItemInfoPanels(root) {
-    if (!relevantPage()) return;
-
-    const activePanel = Array.from(root.querySelectorAll(ITEM_INFO_SELECTOR)).find(isPanelActive);
-    if (!activePanel) {
-      hideItemModal();
+  function renderValueLine(line, base, market, fetching) {
+    if (fetching) {
+      line.textContent = 'Value: checking market…';
       return;
     }
-
-    let state = modalStateByPanel.get(activePanel);
-    if (!state) {
-      let base;
-      try {
-        base = evaluateItemInfoPanel(activePanel);
-      } catch (e) {
-        console.warn('[BB Calc] failed to evaluate item info panel', e, activePanel);
-        return;
-      }
-      if (!base) return; // retry next scan - e.g. items index not loaded yet
-      state = { base, marketValue: undefined, fetching: false };
-      modalStateByPanel.set(activePanel, state);
-    }
-
-    if (state.marketValue === undefined && !state.fetching) {
-      state.fetching = true;
-      fetchMarketValue(state.base).then((marketValue) => {
-        state.marketValue = marketValue;
-        state.fetching = false;
-        if (isPanelActive(activePanel)) renderItemModal(state.base, marketValue, false);
-      });
-    }
-
-    renderItemModal(state.base, state.marketValue, state.fetching);
+    const { value, source } = computeDisplayValue(base, market);
+    line.textContent = `Value: ${fmtMoney(value)} (${source})`;
   }
 
-  // Also called directly from refreshPrices(): a row that couldn't be
-  // evaluated because pricing/category data wasn't loaded yet isn't
+  const valueLineByPanel = new WeakMap(); // panel -> { line, base }
+
+  // Not a floating modal - inserted directly into the panel itself, so
+  // it reads as part of Torn's own detail view rather than a separate
+  // window. Reactive rather than tag-once: panels never get removed
+  // from the DOM when closed (only visually collapsed), so this
+  // re-checks every scan and removes the line the moment its panel
+  // stops being the active one, rather than leaving it to go stale.
+  function scanForItemInfoPanels(root) {
+    for (const panel of root.querySelectorAll(ITEM_INFO_SELECTOR)) {
+      const active = isPanelActive(panel);
+      const state = valueLineByPanel.get(panel);
+
+      if (!active) {
+        if (state) {
+          state.line.remove();
+          valueLineByPanel.delete(panel);
+        }
+        continue;
+      }
+      if (state) continue; // already inserted for this open panel
+
+      let base;
+      try {
+        base = evaluateItemInfoPanel(panel);
+      } catch (e) {
+        console.warn('[BB Calc] failed to evaluate item info panel', e, panel);
+        continue;
+      }
+      if (!base) continue; // retry next scan - e.g. items index not loaded yet
+
+      const line = document.createElement('div');
+      line.className = 'tbb-inline-value';
+      const anchor = panel.querySelector('[class*="descriptionWrapper___"]') || panel;
+      anchor.insertAdjacentElement('afterend', line);
+      const newState = { line, base };
+      valueLineByPanel.set(panel, newState);
+      renderValueLine(line, base, null, true);
+
+      fetchMarketValue(base).then((market) => {
+        if (valueLineByPanel.get(panel) !== newState) return; // panel closed/reopened before this resolved
+        renderValueLine(line, base, market, false);
+      });
+    }
+  }
+
+  // Also called directly from refreshPrices(): a panel that couldn't
+  // be evaluated because pricing/category data wasn't loaded yet isn't
   // retried until something re-scans it, and relying solely on
   // incidental DOM mutations isn't reliable here - e.g. the Auction
   // House's countdown timers likely update via text changes, which
   // the observer below (childList only) doesn't even watch for.
   function runScans() {
     try {
-      scanForProfitableTiles(document.body);
-      scanAuctionListings(document.body);
       scanForItemInfoPanels(document.body);
     } catch (e) {
       console.warn('[BB Calc] scan error', e);
@@ -1349,9 +1080,12 @@
   // ------------------------------------------------------------------
 
   function init() {
-    if (!relevantPage()) return;
-    const panel = buildPanel();
-    buildItemModal();
+    // The persistent calculator panel only builds on its original page
+    // set; the inline per-item value line (scanForItemInfoPanels) has
+    // no page gate of its own; it activates wherever it finds an open
+    // detail panel, so the underlying data fetch and DOM watcher always
+    // run, panel or not.
+    const panel = relevantPage() ? buildPanel() : null;
     refreshPrices(panel);
     startDomWatcher();
     setInterval(() => refreshPrices(panel), PRICE_CACHE_TTL_MS);
