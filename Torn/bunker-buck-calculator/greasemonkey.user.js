@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn - Big Al's Bunker Buck Calculator
 // @namespace    https://github.com/torn-bunker-bb-calculator
-// @version      0.8.0
+// @version      0.8.1
 // @description  Live cache prices + Bunker Buck value calculator for Big Al's Bunker. Shows an integrated value line (Bunker Bucks vs. weav3r's real market sales, whichever is higher) directly in a weapon/armor's detail view on the Item Market, Bazaar, and Auction House. Uses weav3r.dev and the official Torn API.
 // @author       Fuyune [3387109]
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Torn/bunker-buck-calculator
@@ -724,21 +724,20 @@
   }
 
   // ------------------------------------------------------------------
-  // Auction House id resolution
+  // Non-React page id resolution (Auction House, profile showcases)
   //
-  // This page is NOT the React redesign the Item Market/Bazaar use -
-  // it's Torn's older server-rendered markup with plain, stable class
-  // names (no hashed "___xxxxx" suffixes at all here). Each listing is
-  // an <li id="..."> inside ul.items-list, carrying an "item" attribute
-  // with the numeric item ID directly - no need to parse it out of an
-  // aria-controls/href string like the React pages require. Still
-  // needed for the detail-view value display below, to resolve which
-  // item its embedded ".show-item-info" panel belongs to.
+  // Both are Torn's older server-rendered markup with plain, stable
+  // class names (no hashed "___xxxxx" suffixes at all here), each
+  // listing a <li> carrying the numeric item ID directly on a
+  // descendant element - no need to parse it out of an aria-controls/
+  // href string like the React pages require. The attribute name
+  // differs between the two though: Auction House uses "item", profile
+  // showcases use "itemid".
   // ------------------------------------------------------------------
 
-  function auctionListItemId(li) {
-    const withAttr = li.querySelector('[item]');
-    const attrId = parseInt(withAttr?.getAttribute('item'), 10);
+  function listItemItemId(li) {
+    const el = li.querySelector('[itemid], [item]');
+    const attrId = parseInt(el?.getAttribute('itemid') ?? el?.getAttribute('item'), 10);
     if (!Number.isNaN(attrId)) return attrId;
     const link = li.querySelector('a[href*="iteminfo.php?ID="]');
     const m = link?.getAttribute('href').match(/ID=(\d+)/);
@@ -830,14 +829,19 @@
     return null;
   }
 
-  // React pages expose the item id via the panel's own id attribute;
-  // the Auction House's embedded panel has no id, so it falls back to
-  // the "item" attribute on the enclosing <li> instead.
+  // React pages expose the item id via the panel's own id attribute.
+  // Neither non-React panel has an id: on the Auction House the id
+  // lives on the SAME <li> as the embedded panel; on profile showcases
+  // the panel is instead its own separate sibling <li> (like the React
+  // pages' layout), with the id on the tile's <li> immediately before
+  // it - so both are checked.
   function resolveItemId(panel) {
     const direct = itemIdFromAriaControls(panel.id);
     if (direct != null) return direct;
+
     const li = panel.closest('li');
-    return li ? auctionListItemId(li) : null;
+    if (!li) return null;
+    return listItemItemId(li) ?? (li.previousElementSibling ? listItemItemId(li.previousElementSibling) : null);
   }
 
   // itemName comes off the already-resolved id via latestItemsIndex
