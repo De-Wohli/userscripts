@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn - Big Al's Bunker Buck Calculator
 // @namespace    https://github.com/torn-bunker-bb-calculator
-// @version      0.8.2
+// @version      0.8.3
 // @description  Live cache prices + Bunker Buck value calculator for Big Al's Bunker. Shows an integrated value line (Bunker Bucks vs. weav3r's real market sales, whichever is higher) directly in a weapon/armor's detail view on the Item Market, Bazaar, and Auction House. Uses weav3r.dev and the official Torn API.
 // @author       Fuyune [3387109]
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Torn/bunker-buck-calculator
@@ -1060,25 +1060,46 @@
   // the whole page, and matching that at document.body+subtree floods
   // the observer with irrelevant records, which is what was making
   // pages feel sluggish. style/aria-expanded alone cover both real
-  // triggers at a fraction of the volume. The 800ms debounce still
-  // absorbs whatever churn remains.
+  // triggers at a fraction of the volume.
+  //
+  // Throttled, not debounced: a plain debounce resets its timer on
+  // every single mutation, so unrelated but continuous style churn
+  // elsewhere on the page (e.g. per-row auction countdown timers) can
+  // starve it indefinitely while the tab is focused and those keep
+  // firing - it only ever got its quiet window once the tab was
+  // backgrounded and the browser throttled that other activity. A
+  // throttle instead guarantees a scan runs at least once every
+  // 800ms no matter how much unrelated churn is happening.
   function startDomWatcher() {
-    const debouncedScan = debounce(runScans, 800);
-    const observer = new MutationObserver(debouncedScan);
+    const throttledScan = throttle(runScans, 800);
+    const observer = new MutationObserver(throttledScan);
     observer.observe(document.body, {
       childList: true,
       subtree: true,
       attributes: true,
       attributeFilter: ['style', 'aria-expanded'],
     });
-    debouncedScan();
+    throttledScan();
   }
 
-  function debounce(fn, ms) {
-    let t = null;
+  function throttle(fn, ms) {
+    let last = 0;
+    let timer = null;
     return (...args) => {
-      clearTimeout(t);
-      t = setTimeout(() => fn(...args), ms);
+      const now = Date.now();
+      const wait = ms - (now - last);
+      if (wait <= 0) {
+        clearTimeout(timer);
+        timer = null;
+        last = now;
+        fn(...args);
+      } else if (!timer) {
+        timer = setTimeout(() => {
+          last = Date.now();
+          timer = null;
+          fn(...args);
+        }, wait);
+      }
     };
   }
 
