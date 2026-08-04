@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn - Big Al's Bunker Buck Calculator
 // @namespace    https://github.com/torn-bunker-bb-calculator
-// @version      0.8.1
+// @version      0.8.2
 // @description  Live cache prices + Bunker Buck value calculator for Big Al's Bunker. Shows an integrated value line (Bunker Bucks vs. weav3r's real market sales, whichever is higher) directly in a weapon/armor's detail view on the Item Market, Bazaar, and Auction House. Uses weav3r.dev and the official Torn API.
 // @author       Fuyune [3387109]
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Torn/bunker-buck-calculator
@@ -1049,10 +1049,28 @@
     }
   }
 
+  // attributes/attributeFilter matters here, not just childList: the
+  // React pages toggle their panel open by mutating aria-expanded on
+  // an existing button, and the Auction House/showcases reveal
+  // .show-item-info by mutating its style attribute on an element
+  // that's already sitting in the DOM - neither inserts or removes any
+  // node, so childList alone never sees a "View Info" click happen.
+  // Deliberately NOT watching 'class': Torn's React UI toggles
+  // CSS-module classes constantly for hover/animation states across
+  // the whole page, and matching that at document.body+subtree floods
+  // the observer with irrelevant records, which is what was making
+  // pages feel sluggish. style/aria-expanded alone cover both real
+  // triggers at a fraction of the volume. The 800ms debounce still
+  // absorbs whatever churn remains.
   function startDomWatcher() {
     const debouncedScan = debounce(runScans, 800);
     const observer = new MutationObserver(debouncedScan);
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'aria-expanded'],
+    });
     debouncedScan();
   }
 
