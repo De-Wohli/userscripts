@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      2.2.0
+// @version      2.3.0
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -34,267 +34,374 @@
   // ── Inject styles ──────────────────────────────────────────────────
   const style = document.createElement('style');
   style.textContent = `
+    .em-ui, .em-ui * { box-sizing: border-box; }
+    .em-ui {
+      --em-ink: #18272c;
+      --em-ink-2: #213439;
+      --em-line: #3a535a;
+      --em-brass: #c9a227;
+      --em-brass-hi: #e0bb45;
+      --em-chalk: #ebe5d3;
+      --em-lichen: #93ab9e;
+      --em-rust: #e07a5f;
+      --em-moss: #7fbf8a;
+      --em-serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+      --em-sans: system-ui, "Segoe UI", Roboto, sans-serif;
+      font: 13px/1.4 var(--em-sans);
+      color: var(--em-chalk);
+      text-align: left;
+    }
+    .em-ui button:focus-visible, .em-ui input:focus-visible, .em-ui textarea:focus-visible {
+      outline: 2px solid var(--em-brass);
+      outline-offset: 1px;
+    }
+    @keyframes em-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .em-ui *, .em-ui *::before, .em-ui *::after { animation: none !important; transition: none !important; }
+    }
+
+    /* ── Dock ── */
     #em-bar {
       position: fixed;
-      bottom: 18px;
       right: 18px;
+      bottom: 18px;
       z-index: 999999;
       display: flex;
-      flex-direction: column;
+      flex-direction: column-reverse;
       align-items: flex-end;
-      gap: 6px;
-      font-family: 'Segoe UI', system-ui, sans-serif;
+      gap: 8px;
     }
-    .em-btn {
-      padding: 6px 14px;
-      border-radius: 5px;
-      border: none;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-      transition: opacity 0.15s;
-      white-space: nowrap;
-    }
-    .em-btn:hover { opacity: 0.88; }
-    .em-btn--save { background: #c8902a; color: #fff; }
-    .em-btn--map  { background: #1e2535; color: #e8dcc8; border: 1px solid rgba(255,255,255,0.15); }
-    .em-btn--cfg  { background: #1e2535; color: #8a9ab8; border: 1px solid rgba(255,255,255,0.10); font-size: 12px; padding: 4px 10px; }
-    .em-btn--chars { background: #1e2535; color: #e8dcc8; border: 1px solid rgba(255,255,255,0.15); }
-    .em-btn--gather { background: #1e2535; color: #b2d5a7; border: 1px solid rgba(178,213,167,0.35); }
-    .em-btn--ledger { background: #1e2535; color: #7fb0e0; border: 1px solid rgba(127,176,224,0.35); }
-    .em-btn--stock { background: #1e2535; color: #a8d08d; border: 1px solid rgba(168,208,141,0.35); }
-    .em-btn--buildings { background: #1e2535; color: #e0a97f; border: 1px solid rgba(224,169,127,0.35); }
-    .em-btn--memory { background: #1e2535; color: #c99fe0; border: 1px solid rgba(201,159,224,0.35); }
-    .em-btn--toolbox { background: #2a3448; color: #f0dfbf; border: 1px solid rgba(240,223,191,0.28); }
-    .em-btn--chars.has-skills { background: #1a2e1a; color: #7ec87e; border: 1px solid rgba(80,200,80,0.30); }
-    #em-toolbox-panel {
-      margin-top: 6px;
+    #em-toolbox-btn {
       display: flex;
-      flex-direction: column;
-      gap: 6px;
-      padding: 8px;
-      background: rgba(20,26,38,0.92);
-      border: 1px solid rgba(255,255,255,0.13);
-      border-radius: 8px;
-      box-shadow: 0 8px 18px rgba(0,0,0,0.38);
+      align-items: center;
+      gap: 9px;
+      margin: 0;
+      padding: 5px 14px 5px 5px;
+      background: var(--em-ink);
+      color: var(--em-chalk);
+      border: 1px solid var(--em-line);
+      border-radius: 999px;
+      font: 600 13px/1 var(--em-sans);
+      font-variant-numeric: tabular-nums;
+      cursor: pointer;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+    }
+    #em-toolbox-btn:hover { border-color: var(--em-brass); }
+    .em-compass {
+      position: relative;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 2px solid var(--em-brass);
+      background: var(--em-ink-2);
+      flex: none;
+    }
+    .em-compass::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 3px;
+      width: 6px;
+      height: 16px;
+      margin-left: -3px;
+      background: linear-gradient(var(--em-rust) 50%, var(--em-chalk) 50%);
+      clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+      transition: transform 0.3s ease;
+    }
+    #em-toolbox-btn[aria-expanded="true"] .em-compass::before { transform: rotate(180deg); }
+    .em-pos-label { color: var(--em-lichen); font-weight: 400; }
+
+    #em-toolbox-panel {
+      width: 250px;
+      padding: 6px;
+      background: var(--em-ink);
+      border: 1px solid var(--em-line);
+      border-radius: 10px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.45);
     }
     #em-toolbox-panel[hidden] { display: none; }
+    .em-group + .em-group { border-top: 1px solid var(--em-line); margin-top: 6px; padding-top: 6px; }
+    .em-group-label { padding: 4px 8px 2px; font: 600 12px/1.3 var(--em-serif); color: var(--em-lichen); }
+    .em-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      margin: 0;
+      padding: 7px 8px;
+      background: transparent;
+      color: var(--em-chalk);
+      border: none;
+      border-radius: 6px;
+      font: 500 13px/1.3 var(--em-sans);
+      text-align: left;
+      cursor: pointer;
+    }
+    .em-item:hover { background: var(--em-ink-2); }
+    .em-item small { display: block; color: var(--em-lichen); font-size: 11px; font-weight: 400; }
+    .em-ico { width: 18px; text-align: center; flex: none; }
+    .em-item--primary { background: var(--em-brass); color: #1d1704; }
+    .em-item--primary small { color: #3d3210; }
+    .em-item--primary:hover { background: var(--em-brass-hi); }
+    .em-item.has-skills .em-item-label { color: var(--em-moss); }
+    .em-item.is-busy { cursor: progress; opacity: 0.75; }
+    .em-item.is-busy::after {
+      content: '';
+      margin-left: auto;
+      width: 12px;
+      height: 12px;
+      flex: none;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      animation: em-spin 0.8s linear infinite;
+    }
+    .em-footer { display: flex; gap: 4px; }
+    .em-footer .em-item { justify-content: center; color: var(--em-lichen); }
+    .em-footer .em-item:hover { color: var(--em-chalk); }
 
-    #em-overlay {
+    /* ── Windows ── */
+    .em-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.72);
       z-index: 9999999;
       display: flex;
       align-items: center;
       justify-content: center;
+      padding: 16px;
+      background: rgba(8,14,16,0.62);
     }
-    #em-overlay[hidden] { display: none; }
-    #em-modal {
-      background: #171c27;
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 8px;
-      width: min(440px, 96vw);
+    .em-overlay[hidden] { display: none; }
+    .em-modal {
+      width: min(460px, 100%);
       max-height: 90vh;
       overflow-y: auto;
-      color: #e8dcc8;
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      padding: 20px;
+      padding: 18px 20px 20px;
+      background: var(--em-ink);
+      border: 1px solid var(--em-line);
+      border-radius: 12px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.5);
     }
-    #em-modal h2 { font-size: 16px; margin-bottom: 14px; color: #c8902a; cursor: grab; user-select: none; }
-    #em-modal h2:active { cursor: grabbing; }
-    #em-modal h3 { font-size: 13px; color: #8a9ab8; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: 0.06em; }
+    #em-cfg-modal, #em-coord-modal { width: min(360px, 100%); }
+    #em-chars-modal { width: min(520px, 100%); }
+    .em-modal h2 {
+      margin: 0 0 4px;
+      font: 600 20px/1.2 var(--em-serif);
+      color: var(--em-chalk);
+      cursor: grab;
+      user-select: none;
+    }
+    .em-modal h2:active { cursor: grabbing; }
+    .em-modal h3 { margin: 16px 0 6px; font: 600 14px/1.3 var(--em-serif); color: var(--em-chalk); }
+    .em-sub { margin: 0 0 14px; font-size: 12px; color: var(--em-lichen); }
+
     .em-field { margin-bottom: 10px; }
-    .em-field label { display: block; font-size: 12px; color: #8a9ab8; margin-bottom: 3px; }
-    .em-field input, .em-field textarea {
+    .em-field label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--em-lichen); }
+    .em-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .em-field input, .em-field textarea, .em-skill-input {
       width: 100%;
-      background: #1e2535;
-      border: 1px solid rgba(255,255,255,0.12);
-      color: #e8dcc8;
-      border-radius: 4px;
-      padding: 5px 9px;
-      font-size: 13px;
-      font-family: inherit;
+      height: auto;
+      margin: 0;
+      padding: 6px 9px;
+      background: var(--em-ink-2);
+      color: var(--em-chalk);
+      border: 1px solid var(--em-line);
+      border-radius: 6px;
+      box-shadow: none;
+      font: 13px/1.4 var(--em-sans);
     }
     .em-field textarea { resize: vertical; min-height: 54px; }
-    .em-field input:focus, .em-field textarea:focus { outline: none; border-color: #c8902a; }
-    .em-preview-img {
-      width: 100%;
-      aspect-ratio: 1;
-      object-fit: cover;
-      border-radius: 4px;
-      margin-bottom: 10px;
-      display: block;
+    .em-field input:focus, .em-field textarea:focus, .em-skill-input:focus {
+      outline: none;
+      border-color: var(--em-brass);
+      box-shadow: 0 0 0 2px rgba(201,162,39,0.25);
     }
-    .em-row { display: flex; gap: 8px; margin-top: 14px; }
-    .em-submit { background: #c8902a; color: #fff; border: none; border-radius: 4px; padding: 7px 18px; font-size: 13px; font-weight: 600; cursor: pointer; }
-    .em-submit:hover { background: #e0a83a; }
-    .em-cancel { background: transparent; border: 1px solid rgba(255,255,255,0.15); color: #8a9ab8; border-radius: 4px; padding: 7px 14px; font-size: 13px; cursor: pointer; }
-    .em-cancel:hover { background: rgba(255,255,255,0.06); }
+    .em-features { margin: 0 0 10px; padding: 0; list-style: none; font-size: 12px; color: var(--em-lichen); }
+    .em-features li { padding: 4px 0; border-bottom: 1px dashed var(--em-line); }
+    .em-features strong { color: var(--em-chalk); font-weight: 600; }
+    .em-error { margin-top: 8px; font-size: 12px; color: var(--em-rust); }
+    .em-error[hidden] { display: none; }
+
+    .em-row { display: flex; gap: 8px; align-items: center; margin-top: 16px; }
+    .em-submit, .em-cancel {
+      margin: 0;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font: 600 13px/1.2 var(--em-sans);
+      cursor: pointer;
+    }
+    .em-submit { background: var(--em-brass); color: #1d1704; border: 1px solid var(--em-brass); }
+    .em-submit:hover { background: var(--em-brass-hi); }
+    .em-submit:disabled { opacity: 0.6; cursor: progress; }
+    .em-cancel { background: transparent; color: var(--em-lichen); border: 1px solid var(--em-line); font-weight: 400; }
+    .em-cancel:hover { background: var(--em-ink-2); color: var(--em-chalk); }
+
+    /* ── Area grid (the 3×3 around the character) ── */
+    .em-area {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 3px;
+      padding: 3px;
+      margin-bottom: 4px;
+      background: var(--em-line);
+      border-radius: 9px;
+      overflow: hidden;
+    }
+    .em-area--single { grid-template-columns: 1fr; width: 60%; margin-left: auto; margin-right: auto; }
+    .em-cell { position: relative; margin: 0; aspect-ratio: 1; background: var(--em-ink-2); overflow: hidden; }
+    .em-cell img { display: block; width: 100%; height: 100%; object-fit: cover; transition: opacity 0.2s; }
+    .em-cell-empty { display: grid; place-items: center; height: 100%; font-size: 11px; color: var(--em-lichen); }
+    .em-cell figcaption {
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      padding: 12px 4px 3px;
+      background: linear-gradient(transparent, rgba(10,18,20,0.88));
+      font: 11px/1.2 var(--em-sans);
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+      color: var(--em-chalk);
+    }
+    .em-cell.is-detail { outline: 3px solid var(--em-brass); outline-offset: -3px; }
+    .em-cell.is-detail figcaption { color: var(--em-brass-hi); font-weight: 600; }
+    .em-cell::before { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; transition: background 0.2s; }
+    .em-cell[data-state="saving"]::before { background: rgba(24,39,44,0.6); }
+    .em-cell[data-state="saving"]::after {
+      content: '';
+      position: absolute;
+      z-index: 2;
+      left: 50%; top: 50%;
+      width: 16px; height: 16px;
+      margin: -8px 0 0 -8px;
+      border: 2px solid var(--em-chalk);
+      border-right-color: transparent;
+      border-radius: 50%;
+      animation: em-spin 0.8s linear infinite;
+    }
+    .em-cell[data-state="saved"]::before { background: rgba(127,191,138,0.22); box-shadow: inset 0 0 0 2px var(--em-moss); }
+    .em-cell[data-state="failed"]::before { background: rgba(224,122,95,0.28); box-shadow: inset 0 0 0 2px var(--em-rust); }
+    .em-cell[data-state="skipped"] img { opacity: 0.3; }
+    .em-legend { margin: 6px 0 0; font-size: 11px; color: var(--em-lichen); }
+    .em-legend b { color: var(--em-brass-hi); font-weight: 600; }
+
+    /* ── Toast ── */
     .em-toast {
       position: fixed;
-      bottom: 80px;
       right: 18px;
-      background: #1e2535;
-      border: 1px solid rgba(255,255,255,0.15);
-      color: #e8dcc8;
-      border-radius: 6px;
-      padding: 8px 16px;
-      font-size: 13px;
-      font-family: 'Segoe UI', system-ui, sans-serif;
+      bottom: 72px;
       z-index: 9999998;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+      max-width: min(380px, calc(100vw - 36px));
+      padding: 9px 14px;
+      background: var(--em-ink);
+      border: 1px solid var(--em-line);
+      border-left: 3px solid var(--em-moss);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45);
       transition: opacity 0.3s;
     }
-    .em-toast--ok   { border-color: #c8902a; color: #c8902a; }
-    .em-toast--err  { border-color: #c0392b; color: #f08080; }
+    .em-toast--err { border-left-color: var(--em-rust); }
 
+    /* ── Watchtower save pins ── */
     .em-wt-save {
       position: absolute;
       top: 3px;
       right: 3px;
-      background: rgba(200,144,42,0.88);
-      border: none;
-      border-radius: 3px;
-      color: #fff;
-      font-size: 11px;
-      padding: 1px 5px;
-      cursor: pointer;
       z-index: 10;
+      padding: 1px 5px;
+      background: var(--em-brass);
+      color: #1d1704;
+      border: none;
+      border-radius: 4px;
+      font-size: 11px;
       line-height: 1.5;
+      cursor: pointer;
       opacity: 0;
       transition: opacity 0.15s;
       pointer-events: auto;
     }
-    .wt-tile-btn:hover .em-wt-save { opacity: 1; }
-    .em-wt-save:hover { background: rgba(224,168,58,1) !important; opacity: 1 !important; }
+    .wt-tile-btn:hover .em-wt-save, .em-wt-save:focus-visible { opacity: 1; }
+    .em-wt-save:hover { background: var(--em-brass-hi); opacity: 1; }
     .em-wt-save:disabled { opacity: 0.45 !important; cursor: default; }
 
-    #em-cfg-overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.72);
-      z-index: 9999999;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    #em-cfg-overlay[hidden] { display: none; }
-    #em-cfg-modal {
-      background: #171c27;
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 8px;
-      width: min(360px, 96vw);
-      color: #e8dcc8;
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      padding: 20px;
-    }
-    #em-cfg-modal h2 { font-size: 15px; margin-bottom: 14px; color: #8a9ab8; cursor: grab; user-select: none; }
-    #em-cfg-modal h2:active { cursor: grabbing; }
-
-    #em-coord-overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.72);
-      z-index: 9999999;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    #em-coord-overlay[hidden] { display: none; }
-    #em-coord-modal {
-      background: #171c27;
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 8px;
-      width: min(360px, 96vw);
-      color: #e8dcc8;
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      padding: 20px;
-    }
-    #em-coord-modal h2 { font-size: 15px; margin-bottom: 14px; color: #b2d5a7; cursor: grab; user-select: none; }
-    #em-coord-modal h2:active { cursor: grabbing; }
-
-    #em-chars-overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.72);
-      z-index: 9999999;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    #em-chars-overlay[hidden] { display: none; }
-    #em-chars-modal {
-      background: #171c27;
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 8px;
-      width: min(500px, 96vw);
-      max-height: 85vh;
-      overflow-y: auto;
-      color: #e8dcc8;
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      padding: 20px;
-    }
-    #em-chars-modal h2 { font-size: 16px; margin-bottom: 14px; color: #c8902a; cursor: grab; user-select: none; }
-    #em-chars-modal h2:active { cursor: grabbing; }
+    /* ── Characters ── */
     .em-chars-item {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      background: #1e2535;
-      border: 1px solid rgba(255,255,255,0.10);
-      border-radius: 4px;
-      padding: 7px 10px;
-      cursor: pointer;
-      transition: background 0.12s;
       margin-bottom: 4px;
-    }
-    .em-chars-item:hover { background: #252d3e; }
-    .em-skill-row {
-      display: flex;
-      gap: 4px;
-      margin-bottom: 5px;
-      align-items: flex-start;
-    }
-    .em-skill-input {
-      background: #1e2535;
-      border: 1px solid rgba(255,255,255,0.12);
-      color: #e8dcc8;
-      border-radius: 4px;
-      padding: 4px 8px;
-      font-size: 12px;
-      font-family: inherit;
-    }
-    .em-skill-input:focus { outline: none; border-color: #c8902a; }
-    .em-skill-del {
-      background: transparent;
-      border: 1px solid rgba(255,255,255,0.12);
-      color: #5a6880;
-      border-radius: 4px;
-      padding: 3px 7px;
+      padding: 8px 10px;
+      background: var(--em-ink-2);
+      border: 1px solid var(--em-line);
+      border-radius: 6px;
       cursor: pointer;
-      font-size: 13px;
     }
-    .em-skill-del:hover { color: #c0392b; }
+    .em-chars-item:hover { border-color: var(--em-brass); }
+    .em-skill-row { display: flex; gap: 4px; margin-bottom: 5px; align-items: flex-start; }
+    .em-skill-input { font-size: 12px; padding: 4px 8px; }
+    .em-skill-del {
+      margin: 0;
+      padding: 3px 8px;
+      background: transparent;
+      color: var(--em-lichen);
+      border: 1px solid var(--em-line);
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .em-skill-del:hover { color: var(--em-rust); border-color: var(--em-rust); }
   `;
   document.head.appendChild(style);
 
-  // ── Floating button bar ────────────────────────────────────────────
+  // ── Floating dock ──────────────────────────────────────────────────
   const bar = document.createElement('div');
   bar.id = 'em-bar';
+  bar.className = 'em-ui';
   bar.innerHTML = `
-    <button class="em-btn em-btn--toolbox" id="em-toolbox-btn" aria-expanded="false">🧰 Toolbox ▼</button>
+    <button type="button" id="em-toolbox-btn" aria-expanded="false" aria-controls="em-toolbox-panel" title="Everborne Map tools">
+      <span class="em-compass" aria-hidden="true"></span>
+      <span id="em-pos"><span class="em-pos-label">Position unknown</span></span>
+    </button>
     <div id="em-toolbox-panel" hidden>
-      <button class="em-btn em-btn--save"  id="em-save-btn">📍 Save Tile</button>
-      <button class="em-btn em-btn--gather" id="em-save-res-btn">🌿 Save Gather</button>
-      <button class="em-btn em-btn--ledger" id="em-save-ledger-btn">📒 Save Ledger</button>
-      <button class="em-btn em-btn--stock" id="em-save-stock-btn">📦 Save Stock</button>
-      <button class="em-btn em-btn--buildings" id="em-save-buildings-btn">🏘 Save Buildings</button>
-      <button class="em-btn em-btn--memory" id="em-save-memory-btn">🧠 Save Memory</button>
-      <button class="em-btn em-btn--chars" id="em-chars-btn">👤 Characters</button>
-      <button class="em-btn em-btn--map"   id="em-map-btn">🗺 Open Map</button>
-      <button class="em-btn em-btn--cfg"   id="em-cfg-btn">⚙ Settings</button>
+      <div class="em-group">
+        <div class="em-group-label">Map</div>
+        <button type="button" class="em-item em-item--primary" id="em-save-btn">
+          <span class="em-ico" aria-hidden="true">📍</span>
+          <span><span class="em-item-label">Save area</span><small>Your tile and the 8 around it</small></span>
+        </button>
+        <button type="button" class="em-item" id="em-save-res-btn">
+          <span class="em-ico" aria-hidden="true">🌿</span>
+          <span><span class="em-item-label">Save gather</span><small>Open Gather or Wild Beasts first</small></span>
+        </button>
+        <button type="button" class="em-item" id="em-save-buildings-btn">
+          <span class="em-ico" aria-hidden="true">🏘</span>
+          <span><span class="em-item-label">Save buildings</span><small>Open the Buildings tab first</small></span>
+        </button>
+      </div>
+      <div class="em-group">
+        <div class="em-group-label">Warehouse</div>
+        <button type="button" class="em-item" id="em-save-ledger-btn">
+          <span class="em-ico" aria-hidden="true">📒</span>
+          <span><span class="em-item-label">Save ledger</span><small>Open the Warehouse Ledger first</small></span>
+        </button>
+        <button type="button" class="em-item" id="em-save-stock-btn">
+          <span class="em-ico" aria-hidden="true">📦</span>
+          <span><span class="em-item-label">Save stock</span><small>Open the ledger's Inventory panel first</small></span>
+        </button>
+      </div>
+      <div class="em-group">
+        <div class="em-group-label">People</div>
+        <button type="button" class="em-item" id="em-save-memory-btn">
+          <span class="em-ico" aria-hidden="true">🧠</span>
+          <span><span class="em-item-label">Save memory</span><small>Open the Memory window first</small></span>
+        </button>
+        <button type="button" class="em-item" id="em-chars-btn">
+          <span class="em-ico" aria-hidden="true">👤</span>
+          <span><span class="em-item-label" id="em-chars-label">Characters</span><small id="em-chars-hint">Browse and edit saved characters</small></span>
+        </button>
+      </div>
+      <div class="em-group em-footer">
+        <button type="button" class="em-item" id="em-map-btn">Open map</button>
+        <button type="button" class="em-item" id="em-cfg-btn">Settings</button>
+      </div>
     </div>
   `;
   document.body.appendChild(bar);
@@ -304,9 +411,7 @@
   function setToolboxOpen(isOpen) {
     toolboxPanel.hidden = !isOpen;
     toolboxBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    toolboxBtn.textContent = isOpen ? '🧰 Toolbox ▲' : '🧰 Toolbox ▼';
   }
-  setToolboxOpen(false);
   toolboxBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     setToolboxOpen(toolboxPanel.hidden);
@@ -315,63 +420,68 @@
     if (!bar.contains(e.target)) setToolboxOpen(false);
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') setToolboxOpen(false);
+    if (e.key !== 'Escape') return;
+    setToolboxOpen(false);
+    overlay.hidden = true;
+    cfgOverlay.hidden = true;
+    charsOverlay.hidden = true;
   });
 
+  function setBusy(btn, busy) {
+    btn.disabled = busy;
+    btn.classList.toggle('is-busy', busy);
+  }
+
+  function createOverlay(id, modalId, html) {
+    const el = document.createElement('div');
+    el.id = id;
+    el.className = 'em-ui em-overlay';
+    el.hidden = true;
+    el.innerHTML = `<div class="em-modal" id="${modalId}" role="dialog" aria-modal="true">${html}</div>`;
+    document.body.appendChild(el);
+    return el;
+  }
+
   // ── Preview/confirm overlay ────────────────────────────────────────
-  const overlay = document.createElement('div');
-  overlay.id = 'em-overlay';
-  overlay.hidden = true;
-  overlay.innerHTML = `<div id="em-modal"></div>`;
-  document.body.appendChild(overlay);
+  const overlay = createOverlay('em-overlay', 'em-modal', '');
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.hidden = true; });
 
   // ── Settings overlay ───────────────────────────────────────────────
-  const cfgOverlay = document.createElement('div');
-  cfgOverlay.id = 'em-cfg-overlay';
-  cfgOverlay.hidden = true;
-  cfgOverlay.innerHTML = `
-    <div id="em-cfg-modal">
-      <h2>⚙ Everborne Map Settings</h2>
+  const cfgOverlay = createOverlay('em-cfg-overlay', 'em-cfg-modal', `
+      <h2>Settings</h2>
+      <p class="em-sub">Where saved tiles are sent.</p>
       <div class="em-field">
-        <label>Map server URL</label>
+        <label for="em-cfg-server">Map server URL</label>
         <input id="em-cfg-server" type="text" placeholder="http://localhost:3000" autocomplete="off">
       </div>
       <div class="em-field">
-        <label>API Key</label>
-        <input id="em-cfg-key" type="password" placeholder="Paste your API key" autocomplete="new-password">
+        <label for="em-cfg-key">API key</label>
+        <input id="em-cfg-key" type="password" placeholder="Paste your editor key" autocomplete="new-password">
       </div>
       <div class="em-row">
-        <button class="em-submit" id="em-cfg-save">Save</button>
-        <button class="em-cancel" id="em-cfg-cancel">Cancel</button>
+        <button type="button" class="em-submit" id="em-cfg-save">Save settings</button>
+        <button type="button" class="em-cancel" id="em-cfg-cancel">Cancel</button>
       </div>
-    </div>
-  `;
-  document.body.appendChild(cfgOverlay);
+  `);
 
-  const coordOverlay = document.createElement('div');
-  coordOverlay.id = 'em-coord-overlay';
-  coordOverlay.hidden = true;
-  coordOverlay.innerHTML = `
-    <div id="em-coord-modal">
-      <h2>Set Tile Coordinates</h2>
-      <div style="font-size:12px;color:#8a9ab8;margin-bottom:10px;">
-        The world tile could not be determined automatically. Enter the coordinates for the tile to update.
-      </div>
-      <div class="em-field">
-        <label>X Coordinate</label>
-        <input id="em-coord-x" type="number" step="1" placeholder="e.g. 123" autocomplete="off">
-      </div>
-      <div class="em-field">
-        <label>Y Coordinate</label>
-        <input id="em-coord-y" type="number" step="1" placeholder="e.g. 456" autocomplete="off">
+  const coordOverlay = createOverlay('em-coord-overlay', 'em-coord-modal', `
+      <h2>Where are you?</h2>
+      <p class="em-sub">The map isn't visible, so your position can't be read. Enter the coordinates of the tile to update.</p>
+      <div class="em-pair">
+        <div class="em-field">
+          <label for="em-coord-x">X</label>
+          <input id="em-coord-x" type="number" step="1" placeholder="123" autocomplete="off">
+        </div>
+        <div class="em-field">
+          <label for="em-coord-y">Y</label>
+          <input id="em-coord-y" type="number" step="1" placeholder="456" autocomplete="off">
+        </div>
       </div>
       <div class="em-row">
-        <button class="em-submit" id="em-coord-save">Use Coordinates</button>
-        <button class="em-cancel" id="em-coord-cancel">Cancel</button>
+        <button type="button" class="em-submit" id="em-coord-save">Use coordinates</button>
+        <button type="button" class="em-cancel" id="em-coord-cancel">Cancel</button>
       </div>
-    </div>
-  `;
-  document.body.appendChild(coordOverlay);
+  `);
 
   // ── Button handlers ────────────────────────────────────────────────
   document.getElementById('em-map-btn').addEventListener('click', () => {
@@ -386,6 +496,7 @@
     document.getElementById('em-cfg-server').value = getServer();
     document.getElementById('em-cfg-key').value = getApiKey();
     cfgOverlay.hidden = false;
+    document.getElementById('em-cfg-server').focus();
   });
 
   document.getElementById('em-cfg-save').addEventListener('click', () => {
@@ -402,25 +513,22 @@
   // ── Extraction ─────────────────────────────────────────────────────
   document.getElementById('em-save-btn').addEventListener('click', async () => {
     const saveBtn = document.getElementById('em-save-btn');
-    saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ Extracting…';
+    setBusy(saveBtn, true);
 
     try {
-      const data = await extractCurrentTile();
-      showPreviewModal(data);
+      showPreviewModal(await extractArea());
+      setToolboxOpen(false);
     } catch (err) {
-      showToast('Extraction failed: ' + err.message, 'err');
+      showToast('Couldn\'t read the map: ' + err.message, 'err');
       console.error('[EverborneMap]', err);
     } finally {
-      saveBtn.disabled = false;
-      saveBtn.textContent = '📍 Save Tile';
+      setBusy(saveBtn, false);
     }
   });
 
   document.getElementById('em-save-res-btn').addEventListener('click', async () => {
     const saveBtn = document.getElementById('em-save-res-btn');
-    saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ Saving…';
+    setBusy(saveBtn, true);
 
     try {
       let tileCoords = null;
@@ -518,15 +626,13 @@
       showToast('Gather save failed: ' + err.message, 'err');
       console.error('[EverborneMap]', err);
     } finally {
-      saveBtn.disabled = false;
-      saveBtn.textContent = '🌿 Save Gather';
+      setBusy(saveBtn, false);
     }
   });
 
   document.getElementById('em-save-ledger-btn').addEventListener('click', async () => {
     const saveBtn = document.getElementById('em-save-ledger-btn');
-    saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ Saving…';
+    setBusy(saveBtn, true);
 
     try {
       const ledger = extractWarehouseLedgerFromModal();
@@ -554,15 +660,13 @@
       showToast('Ledger save failed: ' + err.message, 'err');
       console.error('[EverborneMap]', err);
     } finally {
-      saveBtn.disabled = false;
-      saveBtn.textContent = '📒 Save Ledger';
+      setBusy(saveBtn, false);
     }
   });
 
   document.getElementById('em-save-stock-btn').addEventListener('click', async () => {
     const saveBtn = document.getElementById('em-save-stock-btn');
-    saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ Saving…';
+    setBusy(saveBtn, true);
 
     try {
       const inventory = extractWarehouseInventoryFromModal();
@@ -588,15 +692,13 @@
       showToast('Stock save failed: ' + err.message, 'err');
       console.error('[EverborneMap]', err);
     } finally {
-      saveBtn.disabled = false;
-      saveBtn.textContent = '📦 Save Stock';
+      setBusy(saveBtn, false);
     }
   });
 
   document.getElementById('em-save-buildings-btn').addEventListener('click', async () => {
     const saveBtn = document.getElementById('em-save-buildings-btn');
-    saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ Saving…';
+    setBusy(saveBtn, true);
 
     try {
       const buildings = extractBuildingsFromPanel();
@@ -637,15 +739,13 @@
       showToast('Buildings save failed: ' + err.message, 'err');
       console.error('[EverborneMap]', err);
     } finally {
-      saveBtn.disabled = false;
-      saveBtn.textContent = '🏘 Save Buildings';
+      setBusy(saveBtn, false);
     }
   });
 
   document.getElementById('em-save-memory-btn').addEventListener('click', async () => {
     const saveBtn = document.getElementById('em-save-memory-btn');
-    saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ Saving…';
+    setBusy(saveBtn, true);
 
     try {
       const entries = extractMemoryFromModal();
@@ -664,8 +764,7 @@
       showToast('Memory save failed: ' + err.message, 'err');
       console.error('[EverborneMap]', err);
     } finally {
-      saveBtn.disabled = false;
-      saveBtn.textContent = '🧠 Save Memory';
+      setBusy(saveBtn, false);
     }
   });
 
@@ -799,6 +898,10 @@
         characterName: extractCharacterName() || null,
         cachedAt: Date.now(),
       };
+      // Text only changes on move, so the body MutationObserver isn't spammed.
+      const posEl = document.getElementById('em-pos');
+      const posText = `${cx}, ${cy}`;
+      if (posEl && posEl.textContent !== posText) posEl.textContent = posText;
     } catch (_) {
       // Map grid not visible right now — leave whatever was cached before alone.
     }
@@ -1157,7 +1260,7 @@
     });
   }
 
-  async function extractCurrentTile() {
+  async function extractArea() {
     // The game renders a 3×3 grid of tiles around the character:
     //
     //   index 0 | index 1 | index 2   ← top row    (dy = -1)
@@ -1171,52 +1274,38 @@
     //   1. The character is always at index 4 (center). Decode its tile ID → (cx, cy).
     //   2. World width  = bottomCenter_id (index 7) − center_id (index 4).
     //      (tiles in the same column differ by exactly worldWidth in their ID)
-    //   3. The selected tile's world pos = (cx + dx, cy + dy) where
-    //      dx = (selectedIdx % 3) − 1,  dy = floor(selectedIdx / 3) − 1.
+    //   3. Tile i's world pos = (cx + dx, cy + dy) where
+    //      dx = (i % 3) − 1,  dy = floor(i / 3) − 1.
+    //
+    // All 9 tile images are saved at once. The #locDesc text (terrain,
+    // features, …) describes the selected tile, so the editable details are
+    // attached to that one tile only — the center if nothing is selected.
 
     const GRID_COLS = 3;
     const { tileWraps, cx, cy } = getMapGridContext();
-
-    // 2. Identify the selected (destination/highlighted) tile
     const selectedIdx = tileWraps.findIndex(w => w.classList.contains('is-selected'));
-    if (selectedIdx < 0) throw new Error('No selected tile found. Click a tile on the game map first.');
+    const detailIdx = selectedIdx >= 0 && selectedIdx < 9 ? selectedIdx : 4;
 
-    const selected = tileWraps[selectedIdx];
-
-    // 3. Selected tile's offset from center in the 3×3 grid
-    const dx = (selectedIdx % GRID_COLS) - 1;  // −1 = left, 0 = center, +1 = right
-    const dy = Math.floor(selectedIdx / GRID_COLS) - 1; // −1 = above, 0 = same row, +1 = below
-
-    const worldX = cx + dx;
-    const worldY = cy + dy;
-
-    // 7. Fetch selected tile image
-    const imgEl = selected.querySelector('.tile-img');
-    let imageBase64 = null;
-    if (imgEl && imgEl.src) {
-      try {
-        imageBase64 = await fetchImageAsBase64(imgEl.src);
-      } catch (e) {
-        console.warn('[EverborneMap] Could not fetch tile image:', e);
+    const tiles = await Promise.all(tileWraps.slice(0, 9).map(async (wrap, idx) => {
+      const imgEl = wrap.querySelector('.tile-img');
+      let imageBase64 = null;
+      if (imgEl && imgEl.src) {
+        try {
+          imageBase64 = await fetchImageAsBase64(imgEl.src);
+        } catch (e) {
+          console.warn('[EverborneMap] Could not fetch tile image:', e);
+        }
       }
-    }
+      return {
+        x: cx + (idx % GRID_COLS) - 1,
+        y: cy + Math.floor(idx / GRID_COLS) - 1,
+        imageBase64,
+        isCenter: idx === 4,
+        isDetail: idx === detailIdx,
+      };
+    }));
 
-    // 4. Text fields from #locDesc (character's current tile)
-    const { city_name, terrain_name, terrain_description, features } = extractLocDescData();
-
-    // Note: #locDesc reflects the character's current tile (center, index 4).
-    // For neighbouring tiles we still pre-fill with whatever is available so
-    // the user has something to start from — they can edit before confirming.
-
-    return {
-      x: worldX,
-      y: worldY,
-      city_name,
-      terrain_name,
-      terrain_description,
-      features,
-      imageBase64,
-    };
+    return { center: { x: cx, y: cy }, tiles, ...extractLocDescData() };
   }
 
   function fetchImageAsBase64(src) {
@@ -1240,101 +1329,152 @@
   }
 
   // ── Preview modal ──────────────────────────────────────────────────
+  // data: { center?, tiles: [{ x, y, imageBase64, isCenter?, isDetail }], city_name, … }
+  // One tile (isDetail) gets the editable fields; every other tile is sent
+  // image-only with merge=true, so existing server data on it is kept.
+  // Neighbours without an image are skipped rather than saved as blank tiles.
   function showPreviewModal(data) {
     const modal = document.getElementById('em-modal');
+    const detail = data.tiles.find(t => t.isDetail);
+    const isArea = data.tiles.length > 1;
+    const sendable = (t) => t.isDetail || t.imageBase64;
 
     // Reset any previously applied drag position
     modal.style.cssText = '';
     overlay.style.alignItems = '';
     overlay.style.justifyContent = '';
 
+    const cells = data.tiles.map((t, i) => `
+      <figure class="em-cell${t.isDetail ? ' is-detail' : ''}" data-i="${i}"${sendable(t) ? '' : ' data-state="skipped"'}>
+        ${t.imageBase64
+          ? `<img src="${sanitizeAttr(t.imageBase64)}" alt="">`
+          : '<div class="em-cell-empty">No image</div>'}
+        <figcaption>${t.isCenter && isArea ? 'You · ' : ''}${t.x}, ${t.y}</figcaption>
+      </figure>`).join('');
+
+    const count = data.tiles.filter(sendable).length;
+    const saveLabel = isArea ? `Save ${count} tiles` : 'Save tile';
+
     modal.innerHTML = `
-      <h2>📍 Save Tile (${data.x}, ${data.y})</h2>
+      <h2>${isArea ? `Save area around ${data.center.x}, ${data.center.y}` : `Save tile ${detail.x}, ${detail.y}`}</h2>
+      <p class="em-sub">${isArea
+        ? 'Saves the image of every tile below. The details go to the outlined tile.'
+        : 'Saves this tile\'s image and the details below.'}</p>
 
-      ${data.imageBase64
-        ? `<img class="em-preview-img" src="${sanitizeAttr(data.imageBase64)}" alt="tile preview">`
-        : '<p style="color:#8a9ab8;font-size:12px;margin-bottom:10px;">No tile image found.</p>'}
+      <div class="em-area${isArea ? '' : ' em-area--single'}">${cells}</div>
+      ${isArea && data.tiles.some(t => !sendable(t))
+        ? '<p class="em-legend">Faded tiles have no image and will be skipped.</p>'
+        : ''}
 
-      <div class="em-field">
-        <label>City Name</label>
-        <input id="em-p-city" type="text" value="${sanitizeAttr(data.city_name || '')}" autocomplete="off">
+      <h3>Details for ${detail.x}, ${detail.y}</h3>
+      <div class="em-pair">
+        <div class="em-field">
+          <label for="em-p-city">City name</label>
+          <input id="em-p-city" type="text" value="${sanitizeAttr(data.city_name || '')}" autocomplete="off">
+        </div>
+        <div class="em-field">
+          <label for="em-p-race">City race or faction</label>
+          <input id="em-p-race" type="text" value="" autocomplete="off">
+        </div>
       </div>
       <div class="em-field">
-        <label>City Race / Faction</label>
-        <input id="em-p-race" type="text" value="" autocomplete="off">
-      </div>
-      <div class="em-field">
-        <label>Terrain</label>
+        <label for="em-p-terrain">Terrain</label>
         <input id="em-p-terrain" type="text" value="${sanitizeAttr(data.terrain_name || '')}" autocomplete="off">
       </div>
       <div class="em-field">
-        <label>Terrain Description</label>
+        <label for="em-p-terrain-desc">Terrain description</label>
         <textarea id="em-p-terrain-desc" rows="2" autocomplete="off">${sanitizeText(data.terrain_description || '')}</textarea>
       </div>
 
-      <h3>Features (${data.features.length})</h3>
-      <div id="em-p-features" style="font-size:12px;color:#8a9ab8;margin-bottom:8px;">
-        ${data.features.map(f => `<div>• <strong>${sanitizeText(f.name)}</strong>${f.description ? ': ' + sanitizeText(f.description) : ''}</div>`).join('') || 'None'}
-      </div>
+      ${data.features.length ? `
+        <h3>Features (${data.features.length})</h3>
+        <ul class="em-features">
+          ${data.features.map(f => `<li><strong>${sanitizeText(f.name)}</strong>${f.description ? ': ' + sanitizeText(f.description) : ''}</li>`).join('')}
+        </ul>` : ''}
 
       <div class="em-field">
-        <label>Resource Tags <span style="font-weight:400;color:#5a6880;">(comma-separated)</span></label>
-        <input id="em-p-tags" type="text" placeholder="e.g. wood, fish, stone" autocomplete="off">
+        <label for="em-p-tags">Resource tags, comma-separated</label>
+        <input id="em-p-tags" type="text" placeholder="wood, fish, stone" autocomplete="off">
       </div>
       <div class="em-field">
-        <label>Notes</label>
-        <textarea id="em-p-notes" rows="2" placeholder="Your personal notes…" autocomplete="off"></textarea>
+        <label for="em-p-notes">Notes</label>
+        <textarea id="em-p-notes" rows="2" placeholder="Anything worth remembering about this place" autocomplete="off"></textarea>
       </div>
 
-      <div id="em-p-error" style="color:#f08080;font-size:12px;margin-top:6px;display:none;"></div>
+      <div id="em-p-error" class="em-error" role="alert" hidden></div>
 
       <div class="em-row">
-        <button class="em-submit" id="em-p-confirm">Send to Map</button>
-        <button class="em-cancel" id="em-p-cancel">Cancel</button>
+        <button type="button" class="em-submit" id="em-p-confirm">${saveLabel}</button>
+        <button type="button" class="em-cancel" id="em-p-cancel">Cancel</button>
       </div>
     `;
 
     overlay.hidden = false;
     makeDraggable(modal, modal.querySelector('h2'));
+    document.getElementById('em-p-city').focus();
 
     document.getElementById('em-p-cancel').addEventListener('click', () => { overlay.hidden = true; });
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.hidden = true; });
+
+    const cellEl = (i) => modal.querySelector(`.em-cell[data-i="${i}"]`);
 
     document.getElementById('em-p-confirm').addEventListener('click', async () => {
       const confirmBtn = document.getElementById('em-p-confirm');
+      const errEl = document.getElementById('em-p-error');
       confirmBtn.disabled = true;
-      confirmBtn.textContent = 'Sending…';
+      confirmBtn.textContent = 'Saving…';
+      errEl.hidden = true;
 
       const tagRaw = document.getElementById('em-p-tags').value;
-      const resource_tags = tagRaw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-
-      const payload = {
-        x: data.x,
-        y: data.y,
+      const detailPayload = {
         city_name: document.getElementById('em-p-city').value.trim() || null,
         city_race: document.getElementById('em-p-race').value.trim() || null,
         terrain_name: document.getElementById('em-p-terrain').value.trim() || null,
         terrain_description: document.getElementById('em-p-terrain-desc').value.trim() || null,
         features: data.features,
-        resource_tags,
+        resource_tags: tagRaw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
         notes: document.getElementById('em-p-notes').value,
-        image_base64: data.imageBase64 || null,
-        merge: true,
       };
 
-      const errEl = document.getElementById('em-p-error');
-      errEl.style.display = 'none';
+      // Only (re)send tiles that aren't saved yet, so a retry after a
+      // partial failure doesn't post the successful ones twice.
+      const pending = data.tiles
+        .map((t, i) => i)
+        .filter(i => !['saved', 'skipped'].includes(cellEl(i).dataset.state));
+      pending.forEach(i => { cellEl(i).dataset.state = 'saving'; });
 
-      try {
-        await postTile(payload);
+      const results = await Promise.allSettled(pending.map(i => {
+        const t = data.tiles[i];
+        return postTile({
+          x: t.x,
+          y: t.y,
+          ...(t.isDetail ? detailPayload : {}),
+          image_base64: t.imageBase64 || null,
+          merge: true,
+        });
+      }));
+
+      const failures = [];
+      results.forEach((r, k) => {
+        const cell = cellEl(pending[k]);
+        cell.dataset.state = r.status === 'fulfilled' ? 'saved' : 'failed';
+        if (r.status === 'rejected') {
+          cell.title = r.reason.message;
+          failures.push(r.reason.message);
+        }
+      });
+
+      if (!failures.length) {
         overlay.hidden = true;
-        showToast(`Tile (${data.x}, ${data.y}) saved!`, 'ok');
-      } catch (err) {
-        errEl.textContent = err.message;
-        errEl.style.display = 'block';
-        confirmBtn.disabled = false;
-        confirmBtn.textContent = 'Send to Map';
+        showToast(isArea
+          ? `Saved ${count} tiles around ${data.center.x}, ${data.center.y}.`
+          : `Saved tile ${detail.x}, ${detail.y}.`, 'ok');
+        return;
       }
+
+      errEl.textContent = `${failures.length} of ${pending.length} tiles failed: ${failures[0]}`;
+      errEl.hidden = false;
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = failures.length === 1 ? 'Retry failed tile' : 'Retry failed tiles';
     });
   }
 
@@ -1498,13 +1638,11 @@
             try { imageBase64 = await fetchImageAsBase64(imgEl.src); } catch {}
           }
           showPreviewModal({
-            x: worldX,
-            y: worldY,
+            tiles: [{ x: worldX, y: worldY, imageBase64, isDetail: true }],
             city_name: null,
             terrain_name: null,
             terrain_description: null,
             features: [],
-            imageBase64,
           });
         } catch (err) {
           anchorPromise = null; // let the next click retry instead of being stuck on a cancelled prompt
@@ -1536,12 +1674,16 @@
     const btn = document.getElementById('em-chars-btn');
     if (!btn) return;
     const hasSkills = document.querySelector('.js-skill-live-card') !== null;
-    const label = hasSkills ? '\ud83d\udcca Scrape Skills' : '\ud83d\udc64 Characters';
+    const label = hasSkills ? 'Scrape skills' : 'Characters';
     // Guard: only touch the DOM when state actually changed to avoid
     // re-triggering the MutationObserver and causing an infinite loop.
-    if (btn.textContent === label) return;
+    const labelEl = document.getElementById('em-chars-label');
+    if (labelEl.textContent === label) return;
     btn.classList.toggle('has-skills', hasSkills);
-    btn.textContent = label;
+    labelEl.textContent = label;
+    document.getElementById('em-chars-hint').textContent = hasSkills
+      ? 'Skills window is open, ready to read'
+      : 'Browse and edit saved characters';
   }
   updateCharsBtn();
 
@@ -1584,11 +1726,7 @@
   );
 
   // ── Characters overlay ─────────────────────────────────────────────
-  const charsOverlay = document.createElement('div');
-  charsOverlay.id = 'em-chars-overlay';
-  charsOverlay.hidden = true;
-  charsOverlay.innerHTML = `<div id="em-chars-modal"><h2>\u{1F464} Characters \u0026 Skills</h2><div id="em-chars-inner"></div></div>`;
-  document.body.appendChild(charsOverlay);
+  const charsOverlay = createOverlay('em-chars-overlay', 'em-chars-modal', `<h2>Characters and skills</h2><div id="em-chars-inner"></div>`);
   charsOverlay.addEventListener('click', e => { if (e.target === charsOverlay) charsOverlay.hidden = true; });
 
   document.getElementById('em-chars-btn').addEventListener('click', () => {
@@ -1673,10 +1811,10 @@
 
   function gmLoadCharsList() {
     const inner = document.getElementById('em-chars-inner');
-    inner.innerHTML = '<p style="color:#8a9ab8;font-size:12px;">Loading\u2026</p>';
+    inner.innerHTML = '<p style="color:var(--em-lichen);font-size:12px;">Loading\u2026</p>';
     gmFetchChars((err, chars) => {
       if (err) {
-        inner.innerHTML = `<p style="color:#f08080;font-size:12px;">${sanitizeText(String(err))}</p>`;
+        inner.innerHTML = `<p style="color:var(--em-rust);font-size:12px;">${sanitizeText(String(err))}</p>`;
         return;
       }
       gmChars = chars;
@@ -1691,7 +1829,7 @@
 
     if (!gmChars.length) {
       const empty = document.createElement('p');
-      empty.style.cssText = 'color:#8a9ab8;font-size:12px;margin-bottom:10px;';
+      empty.style.cssText = 'color:var(--em-lichen);font-size:12px;margin-bottom:10px;';
       empty.textContent = 'No characters yet.';
       inner.appendChild(empty);
     } else {
@@ -1701,9 +1839,9 @@
         item.innerHTML = `
           <div>
             <div style="font-size:13px;font-weight:600;">${sanitizeText(ch.name)}</div>
-            ${ch.player ? `<div style="font-size:11px;color:#8a9ab8;">${sanitizeText(ch.player)}</div>` : ''}
+            ${ch.player ? `<div style="font-size:11px;color:var(--em-lichen);">${sanitizeText(ch.player)}</div>` : ''}
           </div>
-          <div style="font-size:11px;color:#5a6880;">${ch.skills.length} skill${ch.skills.length !== 1 ? 's' : ''}</div>
+          <div style="font-size:11px;color:var(--em-lichen);">${ch.skills.length} skill${ch.skills.length !== 1 ? 's' : ''}</div>
         `;
         item.addEventListener('click', () => gmShowEdit(ch, null));
         inner.appendChild(item);
@@ -1735,13 +1873,13 @@
           <label>Player</label>
           <input id="em-char-player" type="text" value="${sanitizeAttr(ch && ch.player ? ch.player : '')}" placeholder="e.g. Alice" autocomplete="off">
         </div>
-        <h3 style="font-size:12px;color:#8a9ab8;margin:10px 0 6px;text-transform:uppercase;letter-spacing:0.06em;">Skills</h3>
+        <h3>Skills</h3>
         <div id="em-skill-rows" style="margin-bottom:6px;"></div>
         <button type="button" id="em-add-skill" class="em-cancel" style="font-size:11px;padding:3px 10px;margin-bottom:10px;">+ Add Skill</button>
-        <div id="em-char-err" style="color:#f08080;font-size:12px;margin-bottom:6px;display:none;"></div>
+        <div id="em-char-err" style="color:var(--em-rust);font-size:12px;margin-bottom:6px;display:none;"></div>
         <div class="em-row">
-          <button type="button" id="em-char-save" class="em-submit">Send to Map</button>
-          <button type="button" id="em-char-back" class="em-cancel">\u2190 Back</button>
+          <button type="button" id="em-char-save" class="em-submit">Save character</button>
+          <button type="button" id="em-char-back" class="em-cancel">Back to list</button>
         </div>
       </form>
     `;
@@ -1781,7 +1919,7 @@
           const errElNow = document.getElementById('em-char-err');
           const saveBtnNow = document.getElementById('em-char-save');
           if (errElNow) { errElNow.textContent = String(err); errElNow.style.display = 'block'; }
-          if (saveBtnNow) { saveBtnNow.disabled = false; saveBtnNow.textContent = 'Send to Map'; }
+          if (saveBtnNow) { saveBtnNow.disabled = false; saveBtnNow.textContent = 'Save character'; }
           return;
         }
         charsOverlay.hidden = true;
@@ -1880,13 +2018,15 @@
   // ── Toast ──────────────────────────────────────────────────────────
   function showToast(msg, type = 'ok') {
     const toast = document.createElement('div');
-    toast.className = `em-toast em-toast--${type}`;
+    toast.className = `em-ui em-toast em-toast--${type}`;
+    toast.setAttribute('role', type === 'err' ? 'alert' : 'status');
     toast.textContent = msg;
     document.body.appendChild(toast);
+    // Long messages (e.g. memory-import collisions) need time to be read.
     setTimeout(() => {
       toast.style.opacity = '0';
       setTimeout(() => toast.remove(), 350);
-    }, 3000);
+    }, Math.min(9000, 2500 + msg.length * 40));
   }
 
   // ── Sanitize helpers (prevent XSS in generated HTML) ──────────────
