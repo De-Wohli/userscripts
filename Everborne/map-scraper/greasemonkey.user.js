@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      2.3.0
+// @version      2.4.0
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -143,7 +143,6 @@
     .em-item--primary { background: var(--em-brass); color: #1d1704; }
     .em-item--primary small { color: #3d3210; }
     .em-item--primary:hover { background: var(--em-brass-hi); }
-    .em-item.has-skills .em-item-label { color: var(--em-moss); }
     .em-item.is-busy { cursor: progress; opacity: 0.75; }
     .em-item.is-busy::after {
       content: '';
@@ -183,7 +182,6 @@
       box-shadow: 0 24px 60px rgba(0,0,0,0.5);
     }
     #em-cfg-modal, #em-coord-modal { width: min(360px, 100%); }
-    #em-chars-modal { width: min(520px, 100%); }
     .em-modal h2 {
       margin: 0 0 4px;
       font: 600 20px/1.2 var(--em-serif);
@@ -198,7 +196,7 @@
     .em-field { margin-bottom: 10px; }
     .em-field label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--em-lichen); }
     .em-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .em-field input, .em-field textarea, .em-skill-input {
+    .em-field input, .em-field textarea {
       width: 100%;
       height: auto;
       margin: 0;
@@ -211,7 +209,7 @@
       font: 13px/1.4 var(--em-sans);
     }
     .em-field textarea { resize: vertical; min-height: 54px; }
-    .em-field input:focus, .em-field textarea:focus, .em-skill-input:focus {
+    .em-field input:focus, .em-field textarea:focus {
       outline: none;
       border-color: var(--em-brass);
       box-shadow: 0 0 0 2px rgba(201,162,39,0.25);
@@ -322,32 +320,6 @@
     .em-wt-save:hover { background: var(--em-brass-hi); opacity: 1; }
     .em-wt-save:disabled { opacity: 0.45 !important; cursor: default; }
 
-    /* ── Characters ── */
-    .em-chars-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 4px;
-      padding: 8px 10px;
-      background: var(--em-ink-2);
-      border: 1px solid var(--em-line);
-      border-radius: 6px;
-      cursor: pointer;
-    }
-    .em-chars-item:hover { border-color: var(--em-brass); }
-    .em-skill-row { display: flex; gap: 4px; margin-bottom: 5px; align-items: flex-start; }
-    .em-skill-input { font-size: 12px; padding: 4px 8px; }
-    .em-skill-del {
-      margin: 0;
-      padding: 3px 8px;
-      background: transparent;
-      color: var(--em-lichen);
-      border: 1px solid var(--em-line);
-      border-radius: 6px;
-      font-size: 13px;
-      cursor: pointer;
-    }
-    .em-skill-del:hover { color: var(--em-rust); border-color: var(--em-rust); }
   `;
   document.head.appendChild(style);
 
@@ -395,7 +367,7 @@
         </button>
         <button type="button" class="em-item" id="em-chars-btn">
           <span class="em-ico" aria-hidden="true">👤</span>
-          <span><span class="em-item-label" id="em-chars-label">Characters</span><small id="em-chars-hint">Browse and edit saved characters</small></span>
+          <span><span class="em-item-label">Save skills</span><small>Open the Skills window first</small></span>
         </button>
       </div>
       <div class="em-group em-footer">
@@ -424,7 +396,6 @@
     setToolboxOpen(false);
     overlay.hidden = true;
     cfgOverlay.hidden = true;
-    charsOverlay.hidden = true;
   });
 
   function setBusy(btn, busy) {
@@ -548,39 +519,8 @@
         throw new Error('Open the Gather or Wild Beasts modal first.');
       }
 
-      const uniqueResources = [];
-      const resourceIndexByName = new Map();
-      for (const resource of resources) {
-        const key = String(resource.name || '').trim().toLowerCase();
-        if (!key) continue;
-
-        if (!resourceIndexByName.has(key)) {
-          resourceIndexByName.set(key, uniqueResources.length);
-          uniqueResources.push(resource);
-        }
-      }
-
-      const uniqueBeasts = [];
-      const beastIndexByName = new Map();
-      for (const beast of beasts) {
-        const key = String(beast.name || '').trim().toLowerCase();
-        if (!key) continue;
-
-        if (!beastIndexByName.has(key)) {
-          beastIndexByName.set(key, uniqueBeasts.length);
-          uniqueBeasts.push({
-            ...beast,
-            count: 1,
-            ages: beast.age ? [beast.age] : [],
-          });
-          continue;
-        }
-
-        const idx = beastIndexByName.get(key);
-        const target = uniqueBeasts[idx];
-        target.count += 1;
-        if (beast.age && !target.ages.includes(beast.age)) target.ages.push(beast.age);
-      }
+      const uniqueResources = uniqueByName(resources);
+      const uniqueBeasts = uniqueByName(beasts);
 
       const featureRows = [
         ...loc.features,
@@ -651,7 +591,7 @@
         ? ledger.entries.map(e => ({ ...e, tile_x: tileCoords.x, tile_y: tileCoords.y }))
         : ledger.entries;
 
-      const result = await postLedgerImport(entriesWithLocation);
+      const result = await gmJson('POST', '/api/ledger/import', { entries: entriesWithLocation });
       const skippedNote = ledger.skippedSelfUnresolved
         ? `, ${ledger.skippedSelfUnresolved} skipped (couldn't confirm your own name)`
         : '';
@@ -680,7 +620,7 @@
         tileCoords = { x: cx, y: cy };
       } catch (_) { /* no map grid visible right now — that's fine */ }
 
-      const result = await postStockSnapshot({
+      const result = await gmJson('POST', '/api/warehouses/stock-snapshot', {
         warehouse_name: inventory.warehouseName,
         city_name: inventory.cityName,
         tile_x: tileCoords ? tileCoords.x : null,
@@ -752,7 +692,7 @@
       if (!entries) throw new Error('Open the Memory modal first.');
       if (!entries.length) throw new Error('No remembered people found to import.');
 
-      const result = await postMemoryImport(entries);
+      const result = await gmJson('POST', '/api/characters/memory/import', { entries });
       const collisionNote = result.collisions.length
         ? `, ${result.collisions.length} name(s) left for manual merge (shared by more than one person): ${result.collisions.join(', ')}`
         : '';
@@ -793,6 +733,16 @@
     } catch (e) {
       return null;
     }
+  }
+
+  // First entry wins; names compared case-insensitively.
+  function uniqueByName(list) {
+    const byName = new Map();
+    for (const item of list) {
+      const key = String(item.name || '').trim().toLowerCase();
+      if (key && !byName.has(key)) byName.set(key, item);
+    }
+    return [...byName.values()];
   }
 
   function normalizeTag(str) {
@@ -884,20 +834,15 @@
   // world map grid entirely rather than overlaying it, so by the time
   // that tab is open there's nothing left to read a tile position from.
   // Keep a lightweight, continuously-refreshed cache of the last known
-  // position (and character, in case that's ever useful) instead, so
+  // position instead, so
   // Save Buildings doesn't need the map to be visible at the exact
   // moment it's clicked — just at some point recently.
-  let cachedPosition = null; // { x, y, characterName, cachedAt }
+  let cachedPosition = null; // { x, y, cachedAt }
 
   function refreshCachedPosition() {
     try {
       const { cx, cy } = getMapGridContext();
-      cachedPosition = {
-        x: cx,
-        y: cy,
-        characterName: extractCharacterName() || null,
-        cachedAt: Date.now(),
-      };
+      cachedPosition = { x: cx, y: cy, cachedAt: Date.now() };
       // Text only changes on move, so the body MutationObserver isn't spammed.
       const posEl = document.getElementById('em-pos');
       const posText = `${cx}, ${cy}`;
@@ -985,8 +930,8 @@
 
     for (const row of rows) {
       const name = row.querySelector('.col-6 b')?.textContent.trim();
-      const qtyInput = row.querySelector('.col-3 input[type="number"]');
-      if (!name || !qtyInput) continue;
+      // Only gatherable rows carry a quantity input; that's what marks them.
+      if (!name || !row.querySelector('.col-3 input[type="number"]')) continue;
 
       const infoSmall = row.querySelector('.col-6 small');
       const infoLines = infoSmall
@@ -998,27 +943,11 @@
             .filter(Boolean)
         : [];
 
-      const qualityLine = infoLines.find(l => /quality/i.test(l)) || null;
-      const toolLine = infoLines.find(l => /tool required|no tool required/i.test(l)) || null;
-      const availability = infoLines.find(l => /(abundant|common|uncommon|rare|scarce|depleted)/i.test(l)) || null;
-      const requirement = infoLines.find(l => /:/i.test(l) && !/quality|tool required|no tool required|abundant|common|uncommon|rare|scarce|depleted/i.test(l)) || null;
-
-      const rate = Array.from(row.querySelectorAll('.col-3 .text-muted'))
-        .map(el => el.textContent.trim())
-        .find(t => /^Rate:/i.test(t)) || null;
-
-      const action = row.querySelector('.col-3 button')?.textContent.trim() || null;
-
       out.push({
         name,
         biome: nearestGatherBiome(row),
-        quantity: Number(qtyInput.value) || 1,
-        quality_label: qualityLine,
-        tool: toolLine,
-        availability,
-        requirement,
-        rate,
-        action,
+        quality_label: infoLines.find(l => /quality/i.test(l)) || null,
+        availability: infoLines.find(l => /(abundant|common|uncommon|rare|scarce|depleted)/i.test(l)) || null,
       });
     }
 
@@ -1037,21 +966,9 @@
       const name = titleRaw.replace(/^[^A-Za-z0-9]+/, '').trim();
       if (!name) continue;
 
-      const notes = Array.from(row.querySelectorAll('.row-note')).map(n => n.textContent.trim()).filter(Boolean);
-      const badges = Array.from(row.querySelectorAll('.wild-animal-top-meta .badge')).map(b => b.textContent.trim()).filter(Boolean);
-      const diet = row.querySelector('.wild-animal-diet-copy')?.textContent.trim() || null;
-      const health = row.querySelector('.progress-bar')?.textContent.trim() || null;
-      const behavior = row.querySelector('.wild-animal-behavior-text')?.textContent.trim() || null;
-
       out.push({
         name,
-        age: notes[0] || null,
-        requirement: notes[1] || null,
-        status: badges[0] || null,
-        leaves: badges[1] || null,
-        diet,
-        health,
-        behavior,
+        diet: row.querySelector('.wild-animal-diet-copy')?.textContent.trim() || null,
       });
     }
 
@@ -1231,35 +1148,6 @@
     return entries;
   }
 
-  function postMemoryImport(entries) {
-    return new Promise((resolve, reject) => {
-      const key = getApiKey();
-      if (!key) {
-        return reject(new Error('No API key set. Open ⚙ Settings to configure it.'));
-      }
-
-      GM_xmlhttpRequest({
-        method: 'POST',
-        url: `${getServer()}/api/characters/memory/import`,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': key,
-        },
-        data: JSON.stringify({ entries }),
-        onload(response) {
-          if (response.status === 401) return reject(new Error('Invalid API key.'));
-          if (response.status < 200 || response.status >= 300) {
-            let msg = `Server error (${response.status})`;
-            try { msg = JSON.parse(response.responseText).error || msg; } catch {}
-            return reject(new Error(msg));
-          }
-          resolve(JSON.parse(response.responseText));
-        },
-        onerror() { reject(new Error('Could not reach map server. Is it running?')); },
-      });
-    });
-  }
-
   async function extractArea() {
     // The game renders a 3×3 grid of tiles around the character:
     //
@@ -1347,7 +1235,7 @@
     const cells = data.tiles.map((t, i) => `
       <figure class="em-cell${t.isDetail ? ' is-detail' : ''}" data-i="${i}"${sendable(t) ? '' : ' data-state="skipped"'}>
         ${t.imageBase64
-          ? `<img src="${sanitizeAttr(t.imageBase64)}" alt="">`
+          ? `<img src="${escapeHtml(t.imageBase64)}" alt="">`
           : '<div class="em-cell-empty">No image</div>'}
         <figcaption>${t.isCenter && isArea ? 'You · ' : ''}${t.x}, ${t.y}</figcaption>
       </figure>`).join('');
@@ -1370,7 +1258,7 @@
       <div class="em-pair">
         <div class="em-field">
           <label for="em-p-city">City name</label>
-          <input id="em-p-city" type="text" value="${sanitizeAttr(data.city_name || '')}" autocomplete="off">
+          <input id="em-p-city" type="text" value="${escapeHtml(data.city_name || '')}" autocomplete="off">
         </div>
         <div class="em-field">
           <label for="em-p-race">City race or faction</label>
@@ -1379,17 +1267,17 @@
       </div>
       <div class="em-field">
         <label for="em-p-terrain">Terrain</label>
-        <input id="em-p-terrain" type="text" value="${sanitizeAttr(data.terrain_name || '')}" autocomplete="off">
+        <input id="em-p-terrain" type="text" value="${escapeHtml(data.terrain_name || '')}" autocomplete="off">
       </div>
       <div class="em-field">
         <label for="em-p-terrain-desc">Terrain description</label>
-        <textarea id="em-p-terrain-desc" rows="2" autocomplete="off">${sanitizeText(data.terrain_description || '')}</textarea>
+        <textarea id="em-p-terrain-desc" rows="2" autocomplete="off">${escapeHtml(data.terrain_description || '')}</textarea>
       </div>
 
       ${data.features.length ? `
         <h3>Features (${data.features.length})</h3>
         <ul class="em-features">
-          ${data.features.map(f => `<li><strong>${sanitizeText(f.name)}</strong>${f.description ? ': ' + sanitizeText(f.description) : ''}</li>`).join('')}
+          ${data.features.map(f => `<li><strong>${escapeHtml(f.name)}</strong>${f.description ? ': ' + escapeHtml(f.description) : ''}</li>`).join('')}
         </ul>` : ''}
 
       <div class="em-field">
@@ -1478,22 +1366,17 @@
     });
   }
 
-  // ── POST to server ─────────────────────────────────────────────────
-  function postTile(payload) {
+  // ── Map server requests ────────────────────────────────────────────
+  function gmJson(method, path, body) {
     return new Promise((resolve, reject) => {
       const key = getApiKey();
-      if (!key) {
-        return reject(new Error('No API key set. Open ⚙ Settings to configure it.'));
-      }
+      if (!key) return reject(new Error('No API key set. Open Settings to add it.'));
 
       GM_xmlhttpRequest({
-        method: 'POST',
-        url: `${getServer()}/api/tiles`,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': key,
-        },
-        data: JSON.stringify(payload),
+        method,
+        url: `${getServer()}${path}`,
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
+        data: body === undefined ? undefined : JSON.stringify(body),
         onload(response) {
           if (response.status === 401) return reject(new Error('Invalid API key.'));
           if (response.status < 200 || response.status >= 300) {
@@ -1501,70 +1384,13 @@
             try { msg = JSON.parse(response.responseText).error || msg; } catch {}
             return reject(new Error(msg));
           }
-          resolve(JSON.parse(response.responseText));
+          try { resolve(JSON.parse(response.responseText)); } catch { reject(new Error('Invalid server response')); }
         },
         onerror() { reject(new Error('Could not reach map server. Is it running?')); },
       });
     });
   }
-
-  function postLedgerImport(entries) {
-    return new Promise((resolve, reject) => {
-      const key = getApiKey();
-      if (!key) {
-        return reject(new Error('No API key set. Open ⚙ Settings to configure it.'));
-      }
-
-      GM_xmlhttpRequest({
-        method: 'POST',
-        url: `${getServer()}/api/ledger/import`,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': key,
-        },
-        data: JSON.stringify({ entries }),
-        onload(response) {
-          if (response.status === 401) return reject(new Error('Invalid API key.'));
-          if (response.status < 200 || response.status >= 300) {
-            let msg = `Server error (${response.status})`;
-            try { msg = JSON.parse(response.responseText).error || msg; } catch {}
-            return reject(new Error(msg));
-          }
-          resolve(JSON.parse(response.responseText));
-        },
-        onerror() { reject(new Error('Could not reach map server. Is it running?')); },
-      });
-    });
-  }
-
-  function postStockSnapshot(payload) {
-    return new Promise((resolve, reject) => {
-      const key = getApiKey();
-      if (!key) {
-        return reject(new Error('No API key set. Open ⚙ Settings to configure it.'));
-      }
-
-      GM_xmlhttpRequest({
-        method: 'POST',
-        url: `${getServer()}/api/warehouses/stock-snapshot`,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': key,
-        },
-        data: JSON.stringify(payload),
-        onload(response) {
-          if (response.status === 401) return reject(new Error('Invalid API key.'));
-          if (response.status < 200 || response.status >= 300) {
-            let msg = `Server error (${response.status})`;
-            try { msg = JSON.parse(response.responseText).error || msg; } catch {}
-            return reject(new Error(msg));
-          }
-          resolve(JSON.parse(response.responseText));
-        },
-        onerror() { reject(new Error('Could not reach map server. Is it running?')); },
-      });
-    });
-  }
+  const postTile = (payload) => gmJson('POST', '/api/tiles', payload);
 
   // ── Watchtower (lookout) support ────────────────────────────────────
   // The grid's tile buttons used to carry a decodable data-tile-obf id
@@ -1661,31 +1487,12 @@
   const wtObserver = new MutationObserver(() => {
     const grid = document.querySelector('.wt-grid');
     if (grid) decorateWatchtowerGrid(grid);
-    updateCharsBtn();
   });
   wtObserver.observe(document.body, { childList: true, subtree: true });
 
   // Handle the case where the grid is already present at script load time.
   const existingWtGrid = document.querySelector('.wt-grid');
   if (existingWtGrid) decorateWatchtowerGrid(existingWtGrid);
-
-  // ── Skills modal indicator: tint the Characters button green when scraping is available ──
-  function updateCharsBtn() {
-    const btn = document.getElementById('em-chars-btn');
-    if (!btn) return;
-    const hasSkills = document.querySelector('.js-skill-live-card') !== null;
-    const label = hasSkills ? 'Scrape skills' : 'Characters';
-    // Guard: only touch the DOM when state actually changed to avoid
-    // re-triggering the MutationObserver and causing an infinite loop.
-    const labelEl = document.getElementById('em-chars-label');
-    if (labelEl.textContent === label) return;
-    btn.classList.toggle('has-skills', hasSkills);
-    labelEl.textContent = label;
-    document.getElementById('em-chars-hint').textContent = hasSkills
-      ? 'Skills window is open, ready to read'
-      : 'Browse and edit saved characters';
-  }
-  updateCharsBtn();
 
   // ── Draggable modals ───────────────────────────────────────────────
   function makeDraggable(modal, handle) {
@@ -1725,37 +1532,34 @@
     document.querySelector('#em-cfg-modal h2')
   );
 
-  // ── Characters overlay ─────────────────────────────────────────────
-  const charsOverlay = createOverlay('em-chars-overlay', 'em-chars-modal', `<h2>Characters and skills</h2><div id="em-chars-inner"></div>`);
-  charsOverlay.addEventListener('click', e => { if (e.target === charsOverlay) charsOverlay.hidden = true; });
+  // ── Save skills ────────────────────────────────────────────────────
+  // Editing characters by hand lives in the web viewer; this only syncs the
+  // open Skills window. The server overwrites player/notes on update, so
+  // they're carried over from the existing record.
+  document.getElementById('em-chars-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('em-chars-btn');
+    setBusy(btn, true);
+    try {
+      const skills = extractSkillsFromPage();
+      if (!skills.length) throw new Error('Open your Skills window first.');
+      const name = extractCharacterName();
+      if (!name) throw new Error('Could not read your character name.');
 
-  document.getElementById('em-chars-btn').addEventListener('click', () => {
-    const skills = extractSkillsFromPage();
-    const charName = extractCharacterName();
-    charsOverlay.hidden = false;
-    const modal = document.getElementById('em-chars-modal');
-    modal.style.cssText = '';
-    charsOverlay.style.alignItems = '';
-    charsOverlay.style.justifyContent = '';
-    makeDraggable(modal, modal.querySelector('h2'));
-    if (skills.length) {
-      // Skills modal is open — scrape and go straight to the edit form
-      gmFetchChars((err, chars) => {
-        gmChars = err ? [] : chars;
-        const existing = charName
-          ? gmChars.find(c => c.name.toLowerCase() === charName.toLowerCase())
-          : null;
-        const prefill = existing
-          ? { ...existing, skills }
-          : { name: charName, player: null, skills };
-        const notice = existing
-          ? `Scraped ${skills.length} skills from the page \u2014 updating existing character.`
-          : `Scraped ${skills.length} skills from the page${charName ? ` for \u201c${charName}\u201d` : ''}.`;
-        gmShowEdit(prefill, notice);
+      const chars = await gmJson('GET', '/api/characters');
+      const existing = chars.find(c => c.name.toLowerCase() === name.toLowerCase());
+      await gmJson('POST', '/api/characters', {
+        id: existing?.id,
+        name,
+        player: existing?.player ?? null,
+        notes: existing?.notes ?? '',
+        skills,
       });
-    } else {
-      // No skills modal open — show character list
-      gmLoadCharsList();
+      showToast(`Saved ${skills.length} skills for ${name}.`, 'ok');
+    } catch (err) {
+      showToast('Skills save failed: ' + err.message, 'err');
+      console.error('[EverborneMap]', err);
+    } finally {
+      setBusy(btn, false);
     }
   });
 
@@ -1806,215 +1610,6 @@
     return skills;
   }
 
-  let gmChars    = [];
-  let gmSkills   = [];
-
-  function gmLoadCharsList() {
-    const inner = document.getElementById('em-chars-inner');
-    inner.innerHTML = '<p style="color:var(--em-lichen);font-size:12px;">Loading\u2026</p>';
-    gmFetchChars((err, chars) => {
-      if (err) {
-        inner.innerHTML = `<p style="color:var(--em-rust);font-size:12px;">${sanitizeText(String(err))}</p>`;
-        return;
-      }
-      gmChars = chars;
-      gmShowList();
-    });
-  }
-
-  function gmShowList() {
-    const inner = document.getElementById('em-chars-inner');
-    inner.innerHTML = '';
-    const key = getApiKey();
-
-    if (!gmChars.length) {
-      const empty = document.createElement('p');
-      empty.style.cssText = 'color:var(--em-lichen);font-size:12px;margin-bottom:10px;';
-      empty.textContent = 'No characters yet.';
-      inner.appendChild(empty);
-    } else {
-      for (const ch of gmChars) {
-        const item = document.createElement('div');
-        item.className = 'em-chars-item';
-        item.innerHTML = `
-          <div>
-            <div style="font-size:13px;font-weight:600;">${sanitizeText(ch.name)}</div>
-            ${ch.player ? `<div style="font-size:11px;color:var(--em-lichen);">${sanitizeText(ch.player)}</div>` : ''}
-          </div>
-          <div style="font-size:11px;color:var(--em-lichen);">${ch.skills.length} skill${ch.skills.length !== 1 ? 's' : ''}</div>
-        `;
-        item.addEventListener('click', () => gmShowEdit(ch, null));
-        inner.appendChild(item);
-      }
-    }
-
-    if (key) {
-      const addBtn = document.createElement('button');
-      addBtn.className = 'em-submit';
-      addBtn.style.cssText = 'margin-top:8px;font-size:12px;padding:5px 14px;';
-      addBtn.textContent = '+ New Character';
-      addBtn.addEventListener('click', () => gmShowEdit(null, null));
-      inner.appendChild(addBtn);
-    }
-  }
-
-  function gmShowEdit(ch, scrapeNotice) {
-    const inner = document.getElementById('em-chars-inner');
-    gmSkills = ch ? ch.skills.map(s => ({ ...s })) : [];
-
-    inner.innerHTML = `
-      <form id="em-char-form" novalidate autocomplete="off">
-        ${scrapeNotice ? `<div style="background:rgba(80,200,80,0.1);border:1px solid rgba(80,200,80,0.3);border-radius:4px;padding:6px 10px;font-size:11px;color:#7ec87e;margin-bottom:10px;">${sanitizeText(scrapeNotice)}</div>` : ''}
-        <div class="em-field">
-          <label>Character Name</label>
-          <input id="em-char-name" type="text" value="${sanitizeAttr(ch ? ch.name : '')}" placeholder="e.g. Aldric the Bold" autocomplete="off" required>
-        </div>
-        <div class="em-field">
-          <label>Player</label>
-          <input id="em-char-player" type="text" value="${sanitizeAttr(ch && ch.player ? ch.player : '')}" placeholder="e.g. Alice" autocomplete="off">
-        </div>
-        <h3>Skills</h3>
-        <div id="em-skill-rows" style="margin-bottom:6px;"></div>
-        <button type="button" id="em-add-skill" class="em-cancel" style="font-size:11px;padding:3px 10px;margin-bottom:10px;">+ Add Skill</button>
-        <div id="em-char-err" style="color:var(--em-rust);font-size:12px;margin-bottom:6px;display:none;"></div>
-        <div class="em-row">
-          <button type="button" id="em-char-save" class="em-submit">Save character</button>
-          <button type="button" id="em-char-back" class="em-cancel">Back to list</button>
-        </div>
-      </form>
-    `;
-
-    gmRenderSkillRows();
-
-    document.getElementById('em-char-back').addEventListener('click', gmShowList);
-    document.getElementById('em-add-skill').addEventListener('click', () => {
-      gmSkills.push({ name: '', level: null, description: '' });
-      gmRenderSkillRows();
-    });
-
-    document.getElementById('em-char-save').addEventListener('click', () => {
-      const errEl   = document.getElementById('em-char-err');
-      const saveBtn = document.getElementById('em-char-save');
-      errEl.style.display = 'none';
-
-      const name = document.getElementById('em-char-name').value.trim();
-      if (!name) {
-        errEl.textContent = 'Character name is required.';
-        errEl.style.display = 'block';
-        return;
-      }
-
-      saveBtn.disabled = true;
-      saveBtn.textContent = 'Sending\u2026';
-
-      const payload = {
-        id:     ch ? ch.id : undefined,
-        name,
-        player: document.getElementById('em-char-player').value.trim() || null,
-        skills: gmSkills.filter(s => s.name),
-      };
-
-      gmPostChar(payload, (err, saved) => {
-        if (err) {
-          const errElNow = document.getElementById('em-char-err');
-          const saveBtnNow = document.getElementById('em-char-save');
-          if (errElNow) { errElNow.textContent = String(err); errElNow.style.display = 'block'; }
-          if (saveBtnNow) { saveBtnNow.disabled = false; saveBtnNow.textContent = 'Save character'; }
-          return;
-        }
-        charsOverlay.hidden = true;
-        showToast(`Character "${saved.name}" saved!`, 'ok');
-      });
-    });
-  }
-
-  function gmRenderSkillRows() {
-    const container = document.getElementById('em-skill-rows');
-    container.innerHTML = '';
-    gmSkills.forEach((skill, i) => {
-      const row = document.createElement('div');
-      row.className = 'em-skill-row';
-
-      const nameIn = document.createElement('input');
-      nameIn.className = 'em-skill-input';
-      nameIn.type = 'text';
-      nameIn.autocomplete = 'off';
-      nameIn.placeholder = 'Skill name';
-      nameIn.value = skill.name || '';
-      nameIn.style.flex = '2';
-      nameIn.addEventListener('input', () => { gmSkills[i].name = nameIn.value; });
-
-      const levelIn = document.createElement('input');
-      levelIn.className = 'em-skill-input';
-      levelIn.type = 'number';
-      levelIn.autocomplete = 'off';
-      levelIn.placeholder = 'Lv';
-      levelIn.min = 1;
-      levelIn.value = skill.level != null ? skill.level : '';
-      levelIn.style.width = '52px';
-      levelIn.addEventListener('input', () => {
-        gmSkills[i].level = levelIn.value === '' ? null : Number(levelIn.value);
-      });
-
-      const descIn = document.createElement('input');
-      descIn.className = 'em-skill-input';
-      descIn.type = 'text';
-      descIn.autocomplete = 'off';
-      descIn.placeholder = 'Description';
-      descIn.value = skill.description || '';
-      descIn.style.flex = '3';
-      descIn.addEventListener('input', () => { gmSkills[i].description = descIn.value; });
-
-      const del = document.createElement('button');
-      del.type = 'button';
-      del.className = 'em-skill-del';
-      del.textContent = '\u00D7';
-      del.addEventListener('click', () => { gmSkills.splice(i, 1); gmRenderSkillRows(); });
-
-      row.appendChild(nameIn);
-      row.appendChild(levelIn);
-      row.appendChild(descIn);
-      row.appendChild(del);
-      container.appendChild(row);
-    });
-  }
-
-  function gmFetchChars(cb) {
-    const key = getApiKey();
-    GM_xmlhttpRequest({
-      method: 'GET',
-      url: `${getServer()}/api/characters`,
-      headers: key ? { 'X-API-Key': key } : {},
-      onload(response) {
-        if (response.status === 401) return cb('Set your API key in \u2699 Settings.');
-        if (response.status < 200 || response.status >= 300) return cb(`Server error (${response.status})`);
-        try { cb(null, JSON.parse(response.responseText)); } catch { cb('Invalid server response'); }
-      },
-      onerror() { cb('Could not reach map server. Is it running?'); },
-    });
-  }
-
-  function gmPostChar(payload, cb) {
-    const key = getApiKey();
-    if (!key) return cb('No API key set. Open \u2699 Settings to configure it.');
-    GM_xmlhttpRequest({
-      method: 'POST',
-      url: `${getServer()}/api/characters`,
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
-      data: JSON.stringify(payload),
-      onload(response) {
-        if (response.status === 401) return cb('Invalid API key.');
-        if (response.status < 200 || response.status >= 300) {
-          let msg = `Server error (${response.status})`;
-          try { msg = JSON.parse(response.responseText).error || msg; } catch {}
-          return cb(msg);
-        }
-        try { cb(null, JSON.parse(response.responseText)); } catch { cb('Invalid server response'); }
-      },
-      onerror() { cb('Could not reach map server. Is it running?'); },
-    });
-  }
-
   // ── Toast ──────────────────────────────────────────────────────────
   function showToast(msg, type = 'ok') {
     const toast = document.createElement('div');
@@ -2030,13 +1625,7 @@
   }
 
   // ── Sanitize helpers (prevent XSS in generated HTML) ──────────────
-  function sanitizeText(str) {
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-  }
-  function sanitizeAttr(str) {
+  function escapeHtml(str) {
     return String(str)
       .replace(/&/g, '&amp;')
       .replace(/"/g, '&quot;')
