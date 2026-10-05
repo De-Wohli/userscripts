@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      2.5.0
+// @version      2.6.0
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -298,28 +298,6 @@
     }
     .em-toast--err { border-left-color: var(--em-rust); }
 
-    /* ── Watchtower save pins ── */
-    .em-wt-save {
-      position: absolute;
-      top: 3px;
-      right: 3px;
-      z-index: 10;
-      padding: 1px 5px;
-      background: var(--em-brass);
-      color: #1d1704;
-      border: none;
-      border-radius: 4px;
-      font-size: 11px;
-      line-height: 1.5;
-      cursor: pointer;
-      opacity: 0;
-      transition: opacity 0.15s;
-      pointer-events: auto;
-    }
-    .wt-tile-btn:hover .em-wt-save, .em-wt-save:focus-visible { opacity: 1; }
-    .em-wt-save:hover { background: var(--em-brass-hi); opacity: 1; }
-    .em-wt-save:disabled { opacity: 0.45 !important; cursor: default; }
-
   `;
   document.head.appendChild(style);
 
@@ -337,7 +315,7 @@
         <div class="em-group-label">Map</div>
         <button type="button" class="em-item em-item--primary" id="em-save-btn">
           <span class="em-ico" aria-hidden="true">📍</span>
-          <span><span class="em-item-label">Save area</span><small>Your tile and the 8 around it</small></span>
+          <span><span class="em-item-label">Save area</span><small>Your 3×3, or the watchtower's 5×5 when open</small></span>
         </button>
         <button type="button" class="em-item" id="em-save-res-btn">
           <span class="em-ico" aria-hidden="true">🌿</span>
@@ -487,7 +465,8 @@
     setBusy(saveBtn, true);
 
     try {
-      showPreviewModal(await extractArea());
+      const wtGrid = findWatchtowerGrid();
+      showPreviewModal(await (wtGrid ? extractWatchtowerArea(wtGrid) : extractArea()));
       setToolboxOpen(false);
     } catch (err) {
       showToast('Couldn\'t read the map: ' + err.message, 'err');
@@ -843,7 +822,7 @@
     try {
       const { cx, cy } = getMapGridContext();
       cachedPosition = { x: cx, y: cy, cachedAt: Date.now() };
-      // Text only changes on move, so the body MutationObserver isn't spammed.
+      // Only touch the DOM when the position actually changed.
       const posEl = document.getElementById('em-pos');
       const posText = `${cx}, ${cy}`;
       if (posEl && posEl.textContent !== posText) posEl.textContent = posText;
@@ -1423,79 +1402,47 @@
     }
   }
 
-  function decorateWatchtowerGrid(grid) {
-    // Bail out if already decorated
-    if (grid.querySelector('.em-wt-save')) return;
-
-    const buttons = Array.from(grid.querySelectorAll('.wt-tile-btn'));
-    if (buttons.length !== WT_GRID_COLS * WT_GRID_COLS) return; // not the 5×5 layout we know how to map
-
-    // Resolved lazily on first save click, then shared by every tile in
-    // this grid so the user isn't prompted more than once per watchtower visit.
-    let anchorPromise = null;
-
-    buttons.forEach((btn, idx) => {
-
-      const saveBtn = document.createElement('button');
-      saveBtn.className = 'em-wt-save';
-      saveBtn.type = 'button';
-      saveBtn.title = `Save all ${buttons.length} tiles; details go to this one`;
-      saveBtn.textContent = '📍';
-
-      saveBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        saveBtn.disabled = true;
-        saveBtn.textContent = '⏳';
-        try {
-          if (!anchorPromise) anchorPromise = resolveWatchtowerAnchor();
-          const anchor = await anchorPromise;
-          const tiles = await Promise.all(buttons.map(async (b, i) => {
-            const imgEl = b.querySelector('img');
-            let imageBase64 = null;
-            if (imgEl && imgEl.src) {
-              try { imageBase64 = await fetchImageAsBase64(imgEl.src); } catch {}
-            }
-            return {
-              x: anchor.x + (i % WT_GRID_COLS) - WT_CENTER_OFFSET,
-              y: anchor.y + Math.floor(i / WT_GRID_COLS) - WT_CENTER_OFFSET,
-              imageBase64,
-              isCenter: i === WT_CENTER_IDX,
-              isDetail: i === idx,
-            };
-          }));
-          showPreviewModal({
-            title: 'Save watchtower view',
-            centerLabel: 'Tower',
-            center: anchor,
-            tiles,
-            city_name: null,
-            terrain_name: null,
-            terrain_description: null,
-            features: [],
-          });
-        } catch (err) {
-          anchorPromise = null; // let the next click retry instead of being stuck on a cancelled prompt
-          showToast('Could not determine this tile\'s position: ' + err.message, 'err');
-        } finally {
-          saveBtn.disabled = false;
-          saveBtn.textContent = '📍';
-        }
-      });
-
-      btn.appendChild(saveBtn);
-    });
+  // The open watchtower's 5×5 grid, or null when no watchtower is showing.
+  function findWatchtowerGrid() {
+    const content = findVisibleModalContent('[data-help="modal.watchtower.content"]');
+    const grid = content && content.querySelector('.wt-grid');
+    return grid && grid.querySelectorAll('.wt-tile-btn').length === WT_GRID_COLS * WT_GRID_COLS ? grid : null;
   }
 
-  // Watch for the watchtower grid being injected into the DOM.
-  const wtObserver = new MutationObserver(() => {
-    const grid = document.querySelector('.wt-grid');
-    if (grid) decorateWatchtowerGrid(grid);
-  });
-  wtObserver.observe(document.body, { childList: true, subtree: true });
+  // Same shape as extractArea(), for the 5×5 watchtower view. The tile you
+  // clicked in the watchtower gets the details; the tower's own tile if none.
+  async function extractWatchtowerArea(grid) {
+    const anchor = await resolveWatchtowerAnchor();
+    const buttons = Array.from(grid.querySelectorAll('.wt-tile-btn'));
+    const selectedIdx = buttons.findIndex(b => b.classList.contains('is-selected') || b.getAttribute('aria-pressed') === 'true');
+    const detailIdx = selectedIdx >= 0 ? selectedIdx : WT_CENTER_IDX;
 
-  // Handle the case where the grid is already present at script load time.
-  const existingWtGrid = document.querySelector('.wt-grid');
-  if (existingWtGrid) decorateWatchtowerGrid(existingWtGrid);
+    const tiles = await Promise.all(buttons.map(async (btn, i) => {
+      const imgEl = btn.querySelector('img');
+      let imageBase64 = null;
+      if (imgEl && imgEl.src) {
+        try { imageBase64 = await fetchImageAsBase64(imgEl.src); } catch {}
+      }
+      return {
+        x: anchor.x + (i % WT_GRID_COLS) - WT_CENTER_OFFSET,
+        y: anchor.y + Math.floor(i / WT_GRID_COLS) - WT_CENTER_OFFSET,
+        imageBase64,
+        isCenter: i === WT_CENTER_IDX,
+        isDetail: i === detailIdx,
+      };
+    }));
+
+    return {
+      title: 'Save watchtower view',
+      centerLabel: 'Tower',
+      center: anchor,
+      tiles,
+      city_name: null,
+      terrain_name: null,
+      terrain_description: null,
+      features: [],
+    };
+  }
 
   // ── Draggable modals ───────────────────────────────────────────────
   function makeDraggable(modal, handle) {
