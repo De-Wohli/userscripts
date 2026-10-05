@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Everborne Map Scraper
 // @namespace    https://github.com/everborne-map
-// @version      2.4.0
+// @version      2.5.0
 // @description  Scrapes the current tile from Everborne and sends it to your local map server.
 // @author       everborne-map
 // @homepageURL  https://github.com/De-Wohli/userscripts/tree/main/Everborne/map-scraper
@@ -237,7 +237,7 @@
     /* ── Area grid (the 3×3 around the character) ── */
     .em-area {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(var(--em-cols, 3), 1fr);
       gap: 3px;
       padding: 3px;
       margin-bottom: 4px;
@@ -245,7 +245,7 @@
       border-radius: 9px;
       overflow: hidden;
     }
-    .em-area--single { grid-template-columns: 1fr; width: 60%; margin-left: auto; margin-right: auto; }
+    #em-modal.em-modal--wide { width: min(580px, 100%); }
     .em-cell { position: relative; margin: 0; aspect-ratio: 1; background: var(--em-ink-2); overflow: hidden; }
     .em-cell img { display: block; width: 100%; height: 100%; object-fit: cover; transition: opacity 0.2s; }
     .em-cell-empty { display: grid; place-items: center; height: 100%; font-size: 11px; color: var(--em-lichen); }
@@ -1193,7 +1193,7 @@
       };
     }));
 
-    return { center: { x: cx, y: cy }, tiles, ...extractLocDescData() };
+    return { title: 'Save area', centerLabel: 'You', center: { x: cx, y: cy }, tiles, ...extractLocDescData() };
   }
 
   function fetchImageAsBase64(src) {
@@ -1217,40 +1217,39 @@
   }
 
   // ── Preview modal ──────────────────────────────────────────────────
-  // data: { center?, tiles: [{ x, y, imageBase64, isCenter?, isDetail }], city_name, … }
+  // data: { center, centerLabel, title, tiles: [{ x, y, imageBase64, isCenter, isDetail }], city_name, … }
+  // tiles is a square grid in reading order (3×3 map or 5×5 watchtower).
   // One tile (isDetail) gets the editable fields; every other tile is sent
   // image-only with merge=true, so existing server data on it is kept.
   // Neighbours without an image are skipped rather than saved as blank tiles.
   function showPreviewModal(data) {
     const modal = document.getElementById('em-modal');
     const detail = data.tiles.find(t => t.isDetail);
-    const isArea = data.tiles.length > 1;
+    const cols = Math.round(Math.sqrt(data.tiles.length));
     const sendable = (t) => t.isDetail || t.imageBase64;
 
     // Reset any previously applied drag position
     modal.style.cssText = '';
     overlay.style.alignItems = '';
     overlay.style.justifyContent = '';
+    modal.classList.toggle('em-modal--wide', cols > 3);
 
     const cells = data.tiles.map((t, i) => `
       <figure class="em-cell${t.isDetail ? ' is-detail' : ''}" data-i="${i}"${sendable(t) ? '' : ' data-state="skipped"'}>
         ${t.imageBase64
           ? `<img src="${escapeHtml(t.imageBase64)}" alt="">`
           : '<div class="em-cell-empty">No image</div>'}
-        <figcaption>${t.isCenter && isArea ? 'You · ' : ''}${t.x}, ${t.y}</figcaption>
+        <figcaption>${t.isCenter ? `${data.centerLabel} · ` : ''}${t.x}, ${t.y}</figcaption>
       </figure>`).join('');
 
     const count = data.tiles.filter(sendable).length;
-    const saveLabel = isArea ? `Save ${count} tiles` : 'Save tile';
 
     modal.innerHTML = `
-      <h2>${isArea ? `Save area around ${data.center.x}, ${data.center.y}` : `Save tile ${detail.x}, ${detail.y}`}</h2>
-      <p class="em-sub">${isArea
-        ? 'Saves the image of every tile below. The details go to the outlined tile.'
-        : 'Saves this tile\'s image and the details below.'}</p>
+      <h2>${data.title} around ${data.center.x}, ${data.center.y}</h2>
+      <p class="em-sub">Saves the image of every tile below. The details go to the outlined tile.</p>
 
-      <div class="em-area${isArea ? '' : ' em-area--single'}">${cells}</div>
-      ${isArea && data.tiles.some(t => !sendable(t))
+      <div class="em-area" style="--em-cols: ${cols}">${cells}</div>
+      ${data.tiles.some(t => !sendable(t))
         ? '<p class="em-legend">Faded tiles have no image and will be skipped.</p>'
         : ''}
 
@@ -1292,7 +1291,7 @@
       <div id="em-p-error" class="em-error" role="alert" hidden></div>
 
       <div class="em-row">
-        <button type="button" class="em-submit" id="em-p-confirm">${saveLabel}</button>
+        <button type="button" class="em-submit" id="em-p-confirm">Save ${count} tiles</button>
         <button type="button" class="em-cancel" id="em-p-cancel">Cancel</button>
       </div>
     `;
@@ -1353,9 +1352,7 @@
 
       if (!failures.length) {
         overlay.hidden = true;
-        showToast(isArea
-          ? `Saved ${count} tiles around ${data.center.x}, ${data.center.y}.`
-          : `Saved tile ${detail.x}, ${detail.y}.`, 'ok');
+        showToast(`Saved ${count} tiles around ${data.center.x}, ${data.center.y}.`, 'ok');
         return;
       }
 
@@ -1408,6 +1405,7 @@
   // derive every other tile from that fixed offset table.
   const WT_GRID_COLS = 5;
   const WT_CENTER_OFFSET = Math.floor(WT_GRID_COLS / 2);
+  const WT_CENTER_IDX = WT_CENTER_OFFSET * WT_GRID_COLS + WT_CENTER_OFFSET;
 
   // Same three-tier fallback as Save Buildings: read the live map grid if
   // it's there, fall back to the background-cached last known position,
@@ -1437,15 +1435,11 @@
     let anchorPromise = null;
 
     buttons.forEach((btn, idx) => {
-      const dx = (idx % WT_GRID_COLS) - WT_CENTER_OFFSET;
-      const dy = Math.floor(idx / WT_GRID_COLS) - WT_CENTER_OFFSET;
 
       const saveBtn = document.createElement('button');
       saveBtn.className = 'em-wt-save';
       saveBtn.type = 'button';
-      saveBtn.title = (dx === 0 && dy === 0)
-        ? 'Save the watchtower\'s own tile'
-        : `Save this tile (${dx >= 0 ? '+' : ''}${dx}, ${dy >= 0 ? '+' : ''}${dy} from the watchtower)`;
+      saveBtn.title = `Save all ${buttons.length} tiles; details go to this one`;
       saveBtn.textContent = '📍';
 
       saveBtn.addEventListener('click', async (e) => {
@@ -1455,16 +1449,25 @@
         try {
           if (!anchorPromise) anchorPromise = resolveWatchtowerAnchor();
           const anchor = await anchorPromise;
-          const worldX = anchor.x + dx;
-          const worldY = anchor.y + dy;
-
-          const imgEl = btn.querySelector('img');
-          let imageBase64 = null;
-          if (imgEl && imgEl.src) {
-            try { imageBase64 = await fetchImageAsBase64(imgEl.src); } catch {}
-          }
+          const tiles = await Promise.all(buttons.map(async (b, i) => {
+            const imgEl = b.querySelector('img');
+            let imageBase64 = null;
+            if (imgEl && imgEl.src) {
+              try { imageBase64 = await fetchImageAsBase64(imgEl.src); } catch {}
+            }
+            return {
+              x: anchor.x + (i % WT_GRID_COLS) - WT_CENTER_OFFSET,
+              y: anchor.y + Math.floor(i / WT_GRID_COLS) - WT_CENTER_OFFSET,
+              imageBase64,
+              isCenter: i === WT_CENTER_IDX,
+              isDetail: i === idx,
+            };
+          }));
           showPreviewModal({
-            tiles: [{ x: worldX, y: worldY, imageBase64, isDetail: true }],
+            title: 'Save watchtower view',
+            centerLabel: 'Tower',
+            center: anchor,
+            tiles,
             city_name: null,
             terrain_name: null,
             terrain_description: null,
